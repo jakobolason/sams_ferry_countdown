@@ -1,0 +1,325 @@
+/*
+
+  AUR4 Clock
+  RTC clock using NTP server to sync time
+
+  Created using the Arduino Uno R4 Wifi example code - RTC_NTPSync, initially created by Sebastian Romero @sebromero  
+
+ Instructions:
+ 1. Change the WiFi credentials in the arduino_secrets.h file to match your WiFi network.
+ 2. Set the orientation using the #define ORIENTATION 0 or 1
+ 3. Set timezone offset hours using the #define TIMEZONE_OFFSET_HOURS according to your localization
+*/
+
+#include "led-matrix.h"
+#include "Arduino_LED_Matrix.h"
+#include "RTC.h"
+#include <WiFi.h>
+#include <ArduinoHttpClient.h>
+#include <ArduinoJson.h>
+
+#include "arduino_secrets.h"
+
+#define LOGGING // for debug purposes
+
+#define TIMEZONE_OFFSET_HOURS 1
+#define ORIENTATION 1 // 0 (up is where the ESP32 is), 1 (up is where the Qwiic is)
+
+unsigned long currentMillis;
+unsigned long previousMillis = 0;
+
+byte currentFrame[NO_OF_ROWS][NO_OF_COLS];
+byte rotatedFrame[NO_OF_ROWS][NO_OF_COLS];
+
+position first = {5, 0}; // position of first digit
+position second = {0, 0}; // etc.
+position third = {5, 7};
+position fourth = {0, 7};
+
+// please enter your sensitive data in the Secret tab/arduino_secrets.h
+char ssid[] = SECRET_SSID; // your network SSID (name)
+char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
+char api_key[] = API_KEY;   // Unique api key to Rejseplanen API 2.0
+
+
+constexpr unsigned int LOCAL_PORT = 2390;  // local port to listen for UDP packets
+constexpr int NTP_PACKET_SIZE = 48; // NTP timestamp is in the first 48 bytes of the message
+
+int wifiStatus = WL_IDLE_STATUS;
+IPAddress timeServer(162, 159, 200, 123); // pool.ntp.org NTP server
+byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+WiFiUDP Udp; // A UDP instance to let us send and receive packets over UDP
+
+char baseUrl[] = "www.rejseplanen.dk/api/";
+WiFiClient client;
+int port = 443;
+
+ArduinoLEDMatrix matrix;
+
+void setDigit(position digitPosition, const byte digit[][5]){
+  for(byte r = 0; r < 3; r++){
+    for(byte c = 0; c < 5; c++){
+      currentFrame[r+digitPosition.row][c+digitPosition.col] = digit[r][c];
+    }
+  }
+}
+
+void rotateFrame(){
+  for(byte r = 0; r < NO_OF_ROWS; r++){
+    for(byte c = 0; c < NO_OF_COLS; c++){
+      rotatedFrame[r][c] = currentFrame[NO_OF_ROWS-1-r][NO_OF_COLS-1-c];
+    }
+  }
+  memcpy(currentFrame, rotatedFrame, sizeof rotatedFrame);
+}
+
+// send an NTP request to the time server at the given address
+unsigned long sendNTPpacket(IPAddress& address) {
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  Udp.beginPacket(address, 123); //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
+}
+
+void printWifiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your board's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+}
+
+void connectToWiFi(){
+  // check for the WiFi module:
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // don't continue
+    while (true);
+  }
+
+  String fv = WiFi.firmwareVersion();
+  if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
+    Serial.println("Please upgrade the firmware");
+  }
+
+  // attempt to connect to WiFi network:
+  while (wifiStatus != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    wifiStatus = WiFi.begin(ssid, pass);
+  }
+  delay(5000);
+  Serial.println("Connected to WiFi");
+  printWifiStatus();
+}
+
+/**
+ * Calculates the current unix time, that is the time in seconds since Jan 1 1970.
+ * It will try to get the time from the NTP server up to `maxTries` times,
+ * then convert it to Unix time and return it.
+ * You can optionally specify a time zone offset in hours that can be positive or negative.
+*/
+unsigned long getUnixTime(int8_t timeZoneOffsetHours = 0, uint8_t maxTries = 5){
+  // Try up to `maxTries` times to get a timestamp from the NTP server, then give up.
+  for (size_t i = 0; i < maxTries; i++){
+    sendNTPpacket(timeServer); // send an NTP packet to a time server
+    // wait to see if a reply is available
+    delay(1000);
+
+    if (Udp.parsePacket()) {
+      Serial.println("Packet received.");
+      Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+
+      //the timestamp starts at byte 40 of the received packet and is four bytes,
+      //or two words, long. First, extract the two words:
+      unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+      unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+      
+      // Combine the four bytes (two words) into a long integer
+      // this is NTP time (seconds since Jan 1 1900):
+      unsigned long secsSince1900 = highWord << 16 | lowWord;
+
+      // Now convert NTP time into everyday time:
+      // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+      const unsigned long seventyYears = 2208988800UL;
+      unsigned long secondsSince1970 = secsSince1900 - seventyYears + (timeZoneOffsetHours * 3600);
+      return secondsSince1970;
+    } else {
+      Serial.println("Packet not received. Trying again.");
+    }
+  }
+  return 0;
+}
+
+void updateTime(){
+  yield();  
+  Serial.println("\nStarting connection to NTP server...");
+  auto unixTime = getUnixTime(TIMEZONE_OFFSET_HOURS, 25);
+  Serial.print("Unix time = ");
+  Serial.println(unixTime);
+  if(unixTime == 0){
+    unixTime = getUnixTime(2,25);
+  }
+  RTCTime timeToSet = RTCTime(unixTime);
+  RTC.setTime(timeToSet);
+  Serial.println("Time updated.");
+}
+
+void searchLocation(String searchInput) {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Attempting to connect to rejseplanen");
+    if (client.connect("www.rejseplanen.dk", 80)) {
+      Serial.println("Connection successful!");
+      client.println("GET /api/location.name?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&productRepresentatives=1&maxNo=2&type=S&format=json&input=Sælvig%20Havn%20(færge) HTTP/1.1");
+      client.println("Host: rejseplanen.dk");
+      client.println("Connection: close");
+      client.println();
+
+      // Wait for the server's response
+      unsigned long timeout = millis();
+      while (client.available() == 0) {
+        if (millis() - timeout > 5000) {
+          Serial.println(">>> Client Timeout !");
+          client.stop();
+          return;
+        }
+      }
+      String fullResponse = "";
+      String jsonResponse = "";
+      bool inBody = false;
+      String headerEnd = "\r\n\r\n";
+      int matchPos = 0;
+
+      while (client.available()) {
+        char c = client.read();
+        
+        if (inBody) {
+          jsonResponse += c;
+        } else {
+          fullResponse += c;
+          
+          // Check for end of headers
+          if (c == headerEnd[matchPos]) {
+            matchPos++;
+            if (matchPos == headerEnd.length()) {
+              inBody = true;
+            }
+          } else {
+            matchPos = 0;
+          }
+        }
+      }
+      Serial.print("Full response: ");
+      Serial.println(jsonResponse);
+
+
+      DynamicJsonDocument doc(4096);
+      
+      DeserializationError error = deserializeJson(doc, jsonResponse);
+      client.stop();
+      
+      if (error) {
+        Serial.print("JSON parsing failed: ");
+        Serial.println(error.c_str());
+        delay(10000);
+        return;
+      }
+      Serial.println("JSON parsed correctly!");
+      if (doc.containsKey("stopLocationOrCoordLocation") && doc["stopLocationOrCoordLocation"].containsKey("StopLocation")) {
+        JsonArray locations = doc["stopLocationOrCoordLocation"]["StopLocation"];
+        Serial.print("Found ");
+        Serial.print(locations.size());
+        Serial.println(" locations:");
+        
+      } else {
+        Serial.println("No locations found in response");
+      }
+    } else {
+      Serial.println("connection failed");
+    }
+
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  connectToWiFi();
+  Udp.begin(LOCAL_PORT);
+
+  RTC.begin();
+  updateTime();
+  matrix.begin();  
+  searchLocation("Sælvig");
+  delay(60000);
+}
+
+void loop() {  
+  currentMillis = millis();
+  if(currentMillis - previousMillis > 43200000){ // 1000 * 60 * 60 * 12
+    updateTime();
+    previousMillis = currentMillis;
+  }
+
+  RTCTime currentTime;
+  RTC.getTime(currentTime);
+  time_t currentMsTime = currentTime.getUnixTime();
+  time_t nextShip = 1739617200000 / 1000; // 15/02/2025 12:00
+  if (nextShip < currentMsTime) {
+    nextShip = currentMsTime;
+  }
+
+  double diffSecs = difftime(nextShip, currentMsTime);
+  if (isnan(diffSecs) || isinf(diffSecs)) {
+    Serial.println("Overflow or invalid time difference detected!");
+    diffSecs = 0;
+  }
+  int minutesUntil = diffSecs / 60;
+  int hoursUntil = minutesUntil / 60;
+  // use as rest, showing hours and minutes correctly
+  int minutesRemaining = minutesUntil % 60;
+  int dayUntil = hoursUntil / 24;
+  if (dayUntil != 0) {
+    // then print "{dayUntil} dage"
+    setDigit(first, digits[dayUntil / 10]);
+    setDigit(second, digits[dayUntil % 10]);
+    setDigit(third, characters[0]);
+    setDigit(fourth, characters[1]);
+  } else {
+    setDigit(first, digits[(int)(hoursUntil / 10)]);
+    setDigit(second, digits[(int)(hoursUntil % 10)]);
+    setDigit(third, digits[(int)(minutesRemaining / 10)]);
+    setDigit(fourth, digits[(int)(minutesRemaining % 10)]);
+  }
+  if (ORIENTATION == 1){
+    rotateFrame();
+  }
+  matrix.renderBitmap(currentFrame, NO_OF_ROWS, NO_OF_COLS);   
+
+
+  delay(1000);   
+}
