@@ -54,6 +54,8 @@ char baseUrl[] = "www.rejseplanen.dk/api/";
 WiFiClient client;
 int port = 443;
 
+String sælvigId = "A=1@O=Sælvig Havn (færge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740046653@";
+
 ArduinoLEDMatrix matrix;
 
 void setDigit(position digitPosition, const byte digit[][5]){
@@ -191,78 +193,79 @@ void updateTime(){
 }
 
 void searchLocation(String searchInput) {
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Attempting to connect to rejseplanen");
-    if (client.connect("www.rejseplanen.dk", 80)) {
-      Serial.println("Connection successful!");
-      client.println("GET /api/location.name?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&productRepresentatives=1&maxNo=2&type=S&format=json&input=Sælvig%20Havn%20(færge) HTTP/1.1");
-      client.println("Host: rejseplanen.dk");
-      client.println("Connection: close");
-      client.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("A successfull wifi connnection was not established!");
+    return;
+  }
 
-      // Wait for the server's response
-      unsigned long timeout = millis();
-      while (client.available() == 0) {
-        if (millis() - timeout > 5000) {
-          Serial.println(">>> Client Timeout !");
-          client.stop();
-          return;
-        }
-      }
-      String fullResponse = "";
-      String jsonResponse = "";
-      bool inBody = false;
-      String headerEnd = "\r\n\r\n";
-      int matchPos = 0;
+  Serial.println("Attempting to connect to rejseplanen");
+  if (!client.connect("www.rejseplanen.dk", 80)) {
+    Serial.println("Failed to connect to rejseplanen");
+  }
 
-      while (client.available()) {
-        char c = client.read();
-        
-        if (inBody) {
-          jsonResponse += c;
-        } else {
-          fullResponse += c;
-          
-          // Check for end of headers
-          if (c == headerEnd[matchPos]) {
-            matchPos++;
-            if (matchPos == headerEnd.length()) {
-              inBody = true;
-            }
-          } else {
-            matchPos = 0;
-          }
-        }
-      }
-      Serial.print("Full response: ");
-      Serial.println(jsonResponse);
+  Serial.println("Connection successful!");
+  client.println("GET /api/location.name?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&maxNo=1&type=S&format=json&input=Sælvig%20Havn%20(færge) HTTP/1.1");
+  client.println("Host: rejseplanen.dk");
+  client.println("Connection: close");
+  client.println();
 
-
-      DynamicJsonDocument doc(4096);
-      
-      DeserializationError error = deserializeJson(doc, jsonResponse);
+  // Wait for the server's response
+  unsigned long timeout = millis();
+  while (client.available() == 0) {
+    if (millis() - timeout > 5000) {
+      Serial.println(">>> Client Timeout !");
       client.stop();
-      
-      if (error) {
-        Serial.print("JSON parsing failed: ");
-        Serial.println(error.c_str());
-        delay(10000);
-        return;
-      }
-      Serial.println("JSON parsed correctly!");
-      if (doc.containsKey("stopLocationOrCoordLocation") && doc["stopLocationOrCoordLocation"].containsKey("StopLocation")) {
-        JsonArray locations = doc["stopLocationOrCoordLocation"]["StopLocation"];
-        Serial.print("Found ");
-        Serial.print(locations.size());
-        Serial.println(" locations:");
-        
+      return;
+    }
+  }
+  String headerResponse = "";
+  String jsonResponse = "";
+  bool inJson = false;
+  while (client.available()) {
+    // Skip everything until we find the first '{'
+    client.readStringUntil('{');
+    // Add back the '{' we just consumed
+    jsonResponse = "{";
+    // Now read the rest of the response
+    jsonResponse += client.readString();
+  }
+  Serial.print("Full response: ");
+  Serial.println(jsonResponse);
+
+
+  DynamicJsonDocument doc(4096);
+  
+  DeserializationError error = deserializeJson(doc, jsonResponse);
+  client.stop();
+  
+  if (error) {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    delay(10000);
+    return;
+  }
+  Serial.println("JSON parsed correctly!");
+
+  if (doc.containsKey("stopLocationOrCoordLocation")) {
+    JsonArray locationsArray = doc["stopLocationOrCoordLocation"];
+    
+    if (locationsArray[0].containsKey("StopLocation")) {
+      JsonObject stopLocation = locationsArray[0]["StopLocation"];
+      Serial.println("Location found:");
+      // Now lets get the id - which is all we want
+      if (stopLocation.containsKey("id")) {
+        String locationId = stopLocation["id"];
+        Serial.print("FOUND ID!!!: ");
+        Serial.println(locationId);
+        sælvigId = locationId;
       } else {
-        Serial.println("No locations found in response");
+        Serial.println("NO id found in response");
       }
     } else {
-      Serial.println("connection failed");
+      Serial.println("No StopLocation found in response");
     }
-
+  } else {
+      Serial.println("No stopLocationOrCoordLocation found in response");
   }
 }
 
