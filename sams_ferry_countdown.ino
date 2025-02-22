@@ -47,7 +47,8 @@ char baseUrl[] = "www.rejseplanen.dk/api/";
 WiFiClient client;
 int port = 443;
 
-String saelvigId = "A=1@O=Sælvig Havn (færge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740046653@";
+String saelvigId = "A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740134093";
+String aarhusId = "A=1@O=Aarhus Havn, Dokk1 (f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1740134093@";
 
 ArduinoLEDMatrix matrix;
 
@@ -111,6 +112,24 @@ void connectToWiFi(){
   printWifiStatus();
 }
 
+String urlEncodeUTF8(String str) {
+    String encoded = "";
+    char c;
+    char buf[4];  // Buffer to store encoded characters
+    for (size_t i = 0; i < str.length(); i++) {
+        c = str.charAt(i);
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            // Safe characters remain unchanged
+            encoded += c;
+        } else {
+            // Convert to %XX format
+            sprintf(buf, "%%%02X", (unsigned char)c);
+            encoded += buf;
+        }
+    }
+    return encoded;
+}
+
 void searchLocation(String searchInput, String* placeId) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("A successfull wifi connnection was not established!");
@@ -123,7 +142,11 @@ void searchLocation(String searchInput, String* placeId) {
   }
 
   Serial.println("Connection successful!");
-  client.println("GET /api/location.name?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&maxNo=1&type=S&format=json&input=Sælvig%20Havn%20(færge) HTTP/1.1");
+  client.print("GET /api/location.name?maxNo=1&type=S&format=json&input=");
+  client.print(searchInput);
+  client.print("&accessId=");
+  client.print(api_key);
+  client.println(" HTTP/1.1");
   client.println("Host: rejseplanen.dk");
   client.println("Connection: close");
   client.println();
@@ -137,14 +160,11 @@ void searchLocation(String searchInput, String* placeId) {
       return;
     }
   }
-  String headerResponse = "";
-  String jsonResponse = "";
-  bool inJson = false;
+  String jsonResponse = "{";
   while (client.available()) {
     // Skip everything until we find the first '{'
     client.readStringUntil('{');
     // Add back the '{' we just consumed
-    jsonResponse = "{";
     // Now read the rest of the response
     jsonResponse += client.readString();
   }
@@ -176,7 +196,7 @@ void searchLocation(String searchInput, String* placeId) {
         String locationId = stopLocation["id"];
         Serial.print("FOUND ID!!!: ");
         Serial.println(locationId);
-        placeId* = locationId;
+        *placeId = locationId;
       } else {
         Serial.println("NO id found in response");
       }
@@ -188,6 +208,127 @@ void searchLocation(String searchInput, String* placeId) {
   }
 }
 
+void searchTrip(String from, String to) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("A successfull wifi connnection was not established!");
+    return;
+  }
+
+  Serial.println("Attempting to connect to rejseplanen");
+  if (!client.connect("www.rejseplanen.dk", 80)) {
+    Serial.println("Failed to connect to rejseplanen");
+    return;
+  }
+
+  Serial.println("Connection successful! Trying to get trip info now");
+  // now insert the parameters (using print allows us to more clearly represent the request)
+  // client.println("GET /api/trip?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&format=json&maxChange=0&originId=A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1739952240@&destId=A=1@O=Aarhus%20Havn,%20Dokk1%20(f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1739952240@ HTTP/1.1");
+  client.print("GET /api/trip?accessId=");
+  client.print(api_key);
+  client.print("&format=json&maxChange=0&originId=");
+  client.print(from);
+  client.print("&destId=");
+  client.print(to);
+  client.println(" HTTP/1.1");
+  client.println("User-Agent: Arduino/1.0");
+  client.println("Cache-Control: no-cache");
+  client.println("Host: rejseplanen.dk");
+  client.println("Connection: close");
+  client.println();
+  Serial.println("GET request sent");
+
+  // Wait for the server's response
+  unsigned long timeout = millis();
+  while (client.available() == 0) {
+    if (millis() - timeout > 5000) {
+      Serial.println(">>> Client Timeout !");
+      client.stop();
+      return;
+    }
+  }
+  String headerResponse = "";
+  String jsonResponse = "";
+  int sizeOfResponse = 0;
+  String statusLine = client.readStringUntil('\n'); // Read the first line (HTTP status)
+  Serial.println(statusLine); // Debug output
+
+  if (statusLine.startsWith("HTTP/")) {
+      int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200, 400)
+      Serial.print("HTTP Status Code: ");
+      Serial.println(statusCode);
+
+      if (statusCode != 200) {
+          Serial.println("Error: Bad response from server.");
+          return; // Stop further processing
+      }
+  } else {
+    Serial.println("!!!--- No status code?");
+  }
+  // // Read and discard headers
+  while (client.available()) {
+      String line = client.readStringUntil('\n');
+      if (line == "\r") break;  // End of headers (last line is just "\r\n")
+      if (line.startsWith("Content-Length:")) {
+        // then get the length, to get the right amount of memory allocated
+        String size = line.substring(line.indexOf(":")+1);
+        sizeOfResponse = size.toInt();
+        Serial.println("size: " + size);
+      }
+  }
+
+  // Now read the JSON body
+  // while (client.available()) {
+  jsonResponse = client.readString();
+  // }
+
+
+  Serial.print("Full response: ");
+  Serial.println(jsonResponse);
+  JsonDocument filter;
+  filter["Origin"] = true;
+  filter["ServiceDays"] = true;
+  DynamicJsonDocument doc(4096);
+
+  StringReader input(jsonResponse);
+  input.find("\"Trip\": [");
+  do {
+    deserialize(doc, input, DeserializationOption::Filter(filter));
+  } while (input.findUntil(",", "]"));
+
+  
+  DeserializationError error = deserializeJson(doc, jsonResponse);
+  client.stop();
+  
+  if (error) {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    delay(10000);
+    return;
+  }
+  Serial.println("JSON parsed correctly!");
+
+  if (doc.containsKey("Trip")) {
+    JsonArray tripArray = doc["Trip"];
+    
+    if (tripArray[0].containsKey("Origin")) {
+      JsonObject departureInfo = tripArray[0]["Origin"];
+      Serial.println("Departure info found:");
+      // Now lets get the id - which is all we want
+      if (departureInfo.containsKey("time")) {
+        String departureTime = departureInfo["time"];
+        Serial.print("FOUND TIME!!!: ");
+        Serial.println(departureTime);
+      } else {
+        Serial.println("NO id found in response");
+      }
+    } else {
+      Serial.println("No departureInfo found in response");
+    }
+  } else {
+      Serial.println("No Trip found in response");
+  }
+}
+
 void setup() {
   Serial.begin(9600);
   connectToWiFi();
@@ -196,7 +337,10 @@ void setup() {
   RTC.begin();
   updateTime();
   matrix.begin();  
-  searchLocation("Sælvig", &saelvigId);
+  // searchLocation("Sælvig", &saelvigId);
+  // searchLocation("Aarhus hav, Dokk1(f%C3%A6rge)", &aarhusId);
+  
+  searchTrip(urlEncodeUTF8(saelvigId), urlEncodeUTF8(aarhusId));
   delay(60000);
 }
 
