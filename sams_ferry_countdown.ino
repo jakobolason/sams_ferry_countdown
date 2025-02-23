@@ -15,15 +15,15 @@
 #include "Arduino_LED_Matrix.h"
 #include "RTC.h"
 #include <WiFi.h>
-#include <ArduinoHttpClient.h>
-#include <ArduinoJson.h>
+#include <time.h>
 
 #include "arduino_secrets.h"
 #include "timeSync.h"
+#include "rpCalls.h"
 
-#define LOGGING // for debug purposes
+#define LOGGING  // for debug purposes
 
-#define ORIENTATION 1 // 0 (up is where the ESP32 is), 1 (up is where the Qwiic is)
+#define ORIENTATION 1  // 0 (up is where the ESP32 is), 1 (up is where the Qwiic is)
 
 unsigned long currentMillis;
 unsigned long previousMillis = 0;
@@ -31,14 +31,14 @@ unsigned long previousMillis = 0;
 byte currentFrame[NO_OF_ROWS][NO_OF_COLS];
 byte rotatedFrame[NO_OF_ROWS][NO_OF_COLS];
 
-position first = {5, 0}; // position of first digit
-position second = {0, 0}; // etc.
-position third = {5, 7};
-position fourth = {0, 7};
+position first = { 5, 0 };   // position of first digit
+position second = { 0, 0 };  // etc.
+position third = { 5, 7 };
+position fourth = { 0, 7 };
 
 // please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[] = SECRET_SSID; // your network SSID (name)
-char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
+char ssid[] = SECRET_SSID;  // your network SSID (name)
+char pass[] = SECRET_PASS;  // your network password (use for WPA, or use as key for WEP)
 char api_key[] = API_KEY;   // Unique api key to Rejseplanen API 2.0
 
 int wifiStatus = WL_IDLE_STATUS;
@@ -50,25 +50,28 @@ int port = 443;
 String saelvigId = "A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740134093";
 String aarhusId = "A=1@O=Aarhus Havn, Dokk1 (f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1740134093@";
 
+datetimeBuffers timeBuffer = {};
+
+
+
 ArduinoLEDMatrix matrix;
 
-void setDigit(position digitPosition, const byte digit[][5]){
-  for(byte r = 0; r < 3; r++){
-    for(byte c = 0; c < 5; c++){
-      currentFrame[r+digitPosition.row][c+digitPosition.col] = digit[r][c];
+void setDigit(position digitPosition, const byte digit[][5]) {
+  for (byte r = 0; r < 3; r++) {
+    for (byte c = 0; c < 5; c++) {
+      currentFrame[r + digitPosition.row][c + digitPosition.col] = digit[r][c];
     }
   }
 }
 
-void rotateFrame(){
-  for(byte r = 0; r < NO_OF_ROWS; r++){
-    for(byte c = 0; c < NO_OF_COLS; c++){
-      rotatedFrame[r][c] = currentFrame[NO_OF_ROWS-1-r][NO_OF_COLS-1-c];
+void rotateFrame() {
+  for (byte r = 0; r < NO_OF_ROWS; r++) {
+    for (byte c = 0; c < NO_OF_COLS; c++) {
+      rotatedFrame[r][c] = currentFrame[NO_OF_ROWS - 1 - r][NO_OF_COLS - 1 - c];
     }
   }
   memcpy(currentFrame, rotatedFrame, sizeof rotatedFrame);
 }
-
 
 void printWifiStatus() {
   // print the SSID of the network you're attached to:
@@ -87,12 +90,13 @@ void printWifiStatus() {
   Serial.println(" dBm");
 }
 
-void connectToWiFi(){
+void connectToWiFi() {
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
     // don't continue
-    while (true);
+    while (true)
+      ;
   }
 
   String fv = WiFi.firmwareVersion();
@@ -112,211 +116,14 @@ void connectToWiFi(){
   printWifiStatus();
 }
 
-String urlEncodeUTF8(String str) {
-    String encoded = "";
-    char c;
-    char buf[4];  // Buffer to store encoded characters
-    for (size_t i = 0; i < str.length(); i++) {
-        c = str.charAt(i);
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            // Safe characters remain unchanged
-            encoded += c;
-        } else {
-            // Convert to %XX format
-            sprintf(buf, "%%%02X", (unsigned char)c);
-            encoded += buf;
-        }
-    }
-    return encoded;
-}
-
-void searchLocation(String searchInput, String* placeId) {
+void updateTimes() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("A successfull wifi connnection was not established!");
     return;
   }
-
-  Serial.println("Attempting to connect to rejseplanen");
-  if (!client.connect("www.rejseplanen.dk", 80)) {
-    Serial.println("Failed to connect to rejseplanen");
-  }
-
-  Serial.println("Connection successful!");
-  client.print("GET /api/location.name?maxNo=1&type=S&format=json&input=");
-  client.print(searchInput);
-  client.print("&accessId=");
-  client.print(api_key);
-  client.println(" HTTP/1.1");
-  client.println("Host: rejseplanen.dk");
-  client.println("Connection: close");
-  client.println();
-
-  // Wait for the server's response
-  unsigned long timeout = millis();
-  while (client.available() == 0) {
-    if (millis() - timeout > 5000) {
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      return;
-    }
-  }
-  String jsonResponse = "{";
-  while (client.available()) {
-    // Skip everything until we find the first '{'
-    client.readStringUntil('{');
-    // Add back the '{' we just consumed
-    // Now read the rest of the response
-    jsonResponse += client.readString();
-  }
-  Serial.print("Full response: ");
-  Serial.println(jsonResponse);
-
-
-  DynamicJsonDocument doc(4096);
-  
-  DeserializationError error = deserializeJson(doc, jsonResponse);
-  client.stop();
-  
-  if (error) {
-    Serial.print("JSON parsing failed: ");
-    Serial.println(error.c_str());
-    delay(10000);
-    return;
-  }
-  Serial.println("JSON parsed correctly!");
-
-  if (doc.containsKey("stopLocationOrCoordLocation")) {
-    JsonArray locationsArray = doc["stopLocationOrCoordLocation"];
-    
-    if (locationsArray[0].containsKey("StopLocation")) {
-      JsonObject stopLocation = locationsArray[0]["StopLocation"];
-      Serial.println("Location found:");
-      // Now lets get the id - which is all we want
-      if (stopLocation.containsKey("id")) {
-        String locationId = stopLocation["id"];
-        Serial.print("FOUND ID!!!: ");
-        Serial.println(locationId);
-        *placeId = locationId;
-      } else {
-        Serial.println("NO id found in response");
-      }
-    } else {
-      Serial.println("No StopLocation found in response");
-    }
-  } else {
-      Serial.println("No stopLocationOrCoordLocation found in response");
-  }
+  // call the functions
 }
 
-void searchTrip(String from, String to) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("A successfull wifi connnection was not established!");
-    return;
-  }
-
-  Serial.println("Attempting to connect to rejseplanen");
-  if (!client.connect("www.rejseplanen.dk", 80)) {
-    Serial.println("Failed to connect to rejseplanen");
-    return;
-  }
-
-  Serial.println("Connection successful! Trying to get trip info now");
-  // now insert the parameters (using print allows us to more clearly represent the request)
-  // client.println("GET /api/trip?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&format=json&maxChange=0&originId=A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1739952240@&destId=A=1@O=Aarhus%20Havn,%20Dokk1%20(f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1739952240@ HTTP/1.1");
-  client.print("GET /api/departureBoard?accessId=");
-  client.print(api_key);
-  client.print("&format=json&id=");
-  client.print(from);
-  // client.print("&destId=");
-  // client.print(to);
-  client.println(" HTTP/1.1");
-  client.println("User-Agent: Arduino/1.0");
-  client.println("Cache-Control: no-cache");
-  client.println("Host: rejseplanen.dk");
-  client.println("Connection: close");
-  client.println();
-  Serial.println("GET request sent");
-
-  // Wait for the server's response
-  unsigned long timeout = millis();
-  while (client.available() == 0) {
-    if (millis() - timeout > 5000) {
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      return;
-    }
-  }
-  String headerResponse = "";
-  String jsonResponse = "";
-  int sizeOfResponse = 0;
-  String statusLine = client.readStringUntil('\n'); // Read the first line (HTTP status)
-  Serial.println(statusLine); // Debug output
-
-  if (statusLine.startsWith("HTTP/")) {
-      int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200, 400)
-      Serial.print("HTTP Status Code: ");
-      Serial.println(statusCode);
-
-      if (statusCode != 200) {
-          Serial.println("Error: Bad response from server.");
-          return; // Stop further processing
-      }
-  } else {
-    Serial.println("!!!--- No status code?");
-  }
-  // // Read and discard headers
-  while (client.available()) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") break;  // End of headers (last line is just "\r\n")
-      if (line.startsWith("Content-Length:")) {
-        // then get the length, to get the right amount of memory allocated
-        String size = line.substring(line.indexOf(":")+1);
-        sizeOfResponse = size.toInt();
-        Serial.println("size: " + size);
-      }
-  }
-
-  // Now read the JSON body
-  // while (client.available()) {
-  jsonResponse = client.readString();
-  // }
-
-
-  Serial.print("Full response: ");
-  Serial.println(jsonResponse);
-
-  // JsonDocument filter;
-  // filter["Departure"];
-  // filter["direction"] = true;
-  // filter["time"] = true;
-  // filter["date"] = true;
-  DynamicJsonDocument doc(sizeOfResponse);
-  
-  client.stop();
-  DeserializationError error = deserializeJson(doc, jsonResponse); // , DeserializationOption::Filter(filter)
-  
-  if (error) {
-    Serial.print("JSON parsing failed: ");
-    Serial.println(error.c_str());
-    delay(10000);
-    return;
-  }
-  Serial.println("JSON parsed correctly!");
-  if (doc.containsKey("Departure")) {
-    JsonArray departures = doc["Departure"];
-    Serial.println("Found departures!");
-    for(JsonObject v : departures) {
-      if (v.containsKey("date")) 
-        Serial.println(String(v["date"]));
-      else {
-        Serial.println("Coulnd't find any date :()(");
-      }
-    }
-  }
-  else {
-    Serial.println("There was no departures to be found :((");
-  }
-}
 
 void setup() {
   Serial.begin(9600);
@@ -325,17 +132,14 @@ void setup() {
 
   RTC.begin();
   updateTime();
-  matrix.begin();  
+  matrix.begin();
   // searchLocation("Sælvig", &saelvigId);
-  // searchLocation("Aarhus hav, Dokk1(f%C3%A6rge)", &aarhusId);
-  
-  searchTrip(urlEncodeUTF8(saelvigId), urlEncodeUTF8(aarhusId));
-  delay(60000);
+  searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer);
 }
 
-void loop() {  
+void loop() {
   currentMillis = millis();
-  if(currentMillis - previousMillis > 43200000){ // 1000 * 60 * 60 * 12
+  if (currentMillis - previousMillis > 43200000) {  // 1000 * 60 * 60 * 12
     updateTime();
     previousMillis = currentMillis;
   }
@@ -343,9 +147,20 @@ void loop() {
   RTCTime currentTime;
   RTC.getTime(currentTime);
   time_t currentMsTime = currentTime.getUnixTime();
-  time_t nextShip = 1739617200000 / 1000; // 15/02/2025 12:00
+  time_t nextShip = 0;  
+  if (timeBuffer.aarhusThere && timeBuffer.houThere) {
+    nextShip = timeBuffer.aarhusTime < timeBuffer.houTime ? timeBuffer.aarhusTime : timeBuffer.houTime;
+  } else if (timeBuffer.aarhusThere) nextShip = timeBuffer.aarhusTime;
+  else if (timeBuffer.houTime) {
+    nextShip = timeBuffer.houTime;
+    Serial.print("set nextship time to hou time: ");
+    Serial.print(ctime(&nextShip));
+    Serial.print("compared to                  : ");
+    Serial.print(ctime(&currentMsTime));
+  }
   if (nextShip < currentMsTime) {
     nextShip = currentMsTime;
+    Serial.println("The ferry has passed...");
   }
 
   double diffSecs = difftime(nextShip, currentMsTime);
@@ -370,11 +185,11 @@ void loop() {
     setDigit(third, digits[(int)(minutesRemaining / 10)]);
     setDigit(fourth, digits[(int)(minutesRemaining % 10)]);
   }
-  if (ORIENTATION == 1){
+  if (ORIENTATION == 1) {
     rotateFrame();
   }
-  matrix.renderBitmap(currentFrame, NO_OF_ROWS, NO_OF_COLS);   
+  matrix.renderBitmap(currentFrame, NO_OF_ROWS, NO_OF_COLS);
 
 
-  delay(1000);   
+  delay(1000);
 }
