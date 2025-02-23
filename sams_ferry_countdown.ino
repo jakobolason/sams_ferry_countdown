@@ -223,12 +223,12 @@ void searchTrip(String from, String to) {
   Serial.println("Connection successful! Trying to get trip info now");
   // now insert the parameters (using print allows us to more clearly represent the request)
   // client.println("GET /api/trip?accessId=706bd956-cb75-4b03-8509-f36210d10ac2&format=json&maxChange=0&originId=A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1739952240@&destId=A=1@O=Aarhus%20Havn,%20Dokk1%20(f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1739952240@ HTTP/1.1");
-  client.print("GET /api/trip?accessId=");
+  client.print("GET /api/departureBoard?accessId=");
   client.print(api_key);
-  client.print("&format=json&maxChange=0&originId=");
+  client.print("&format=json&id=");
   client.print(from);
-  client.print("&destId=");
-  client.print(to);
+  // client.print("&destId=");
+  // client.print(to);
   client.println(" HTTP/1.1");
   client.println("User-Agent: Arduino/1.0");
   client.println("Cache-Control: no-cache");
@@ -284,20 +284,16 @@ void searchTrip(String from, String to) {
 
   Serial.print("Full response: ");
   Serial.println(jsonResponse);
-  JsonDocument filter;
-  filter["Origin"] = true;
-  filter["ServiceDays"] = true;
-  DynamicJsonDocument doc(4096);
 
-  StringReader input(jsonResponse);
-  input.find("\"Trip\": [");
-  do {
-    deserialize(doc, input, DeserializationOption::Filter(filter));
-  } while (input.findUntil(",", "]"));
-
+  // JsonDocument filter;
+  // filter["Departure"];
+  // filter["direction"] = true;
+  // filter["time"] = true;
+  // filter["date"] = true;
+  DynamicJsonDocument doc(sizeOfResponse);
   
-  DeserializationError error = deserializeJson(doc, jsonResponse);
   client.stop();
+  DeserializationError error = deserializeJson(doc, jsonResponse); // , DeserializationOption::Filter(filter)
   
   if (error) {
     Serial.print("JSON parsing failed: ");
@@ -306,26 +302,19 @@ void searchTrip(String from, String to) {
     return;
   }
   Serial.println("JSON parsed correctly!");
-
-  if (doc.containsKey("Trip")) {
-    JsonArray tripArray = doc["Trip"];
-    
-    if (tripArray[0].containsKey("Origin")) {
-      JsonObject departureInfo = tripArray[0]["Origin"];
-      Serial.println("Departure info found:");
-      // Now lets get the id - which is all we want
-      if (departureInfo.containsKey("time")) {
-        String departureTime = departureInfo["time"];
-        Serial.print("FOUND TIME!!!: ");
-        Serial.println(departureTime);
-      } else {
-        Serial.println("NO id found in response");
+  if (doc.containsKey("Departure")) {
+    JsonArray departures = doc["Departure"];
+    Serial.println("Found departures!");
+    for(JsonObject v : departures) {
+      if (v.containsKey("date")) 
+        Serial.println(String(v["date"]));
+      else {
+        Serial.println("Coulnd't find any date :()(");
       }
-    } else {
-      Serial.println("No departureInfo found in response");
     }
-  } else {
-      Serial.println("No Trip found in response");
+  }
+  else {
+    Serial.println("There was no departures to be found :((");
   }
 }
 
