@@ -15,9 +15,19 @@ struct datetimeBuffers {
     bool houThere;
 };
 
+enum class ProgramCodes {
+    SUCCESSFULL,
+    BAD_REQUEST,
+    HANDSHAKE_FAIL,
+    FAULTY_ORIGINID,
+    NO_TRIPS,
+    JSON_PARSING_FAIL,
+    CLIENT_TIMEOUT,
+};
+
 time_t stringToUnixTime(const char* dateStr, const char* timeStr);
 String urlEncodeUTF8(String str);
-void searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]);
-void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers* buffer);
+ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]);
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers* buffer, int duration = 500);
 
 #endif //_RP_CALLS_H

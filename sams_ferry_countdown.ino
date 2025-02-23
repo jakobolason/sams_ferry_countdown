@@ -122,6 +122,16 @@ void updateTimes() {
     return;
   }
   // call the functions
+  ProgramCodes code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer);
+  if (code == ProgramCodes::FAULTY_ORIGINID) {
+    // Call searchLocation
+    searchLocation("Sælvig", &saelvigId, &client, api_key);
+    Serial.println("NEW ID");
+  } else if (code == ProgramCodes::NO_TRIPS) {
+    // TODO: Call searchTrip, but for the next day
+    code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer, 1000); // Add duration length of 2*500
+  }
+
 }
 
 
@@ -139,7 +149,7 @@ void setup() {
 
 void loop() {
   currentMillis = millis();
-  if (currentMillis - previousMillis > 43200000) {  // 1000 * 60 * 60 * 12
+  if (currentMillis - previousMillis > 43200000) { //update every 12 hours
     updateTime();
     previousMillis = currentMillis;
   }
@@ -150,13 +160,15 @@ void loop() {
   time_t nextShip = 0;  
   if (timeBuffer.aarhusThere && timeBuffer.houThere) {
     nextShip = timeBuffer.aarhusTime < timeBuffer.houTime ? timeBuffer.aarhusTime : timeBuffer.houTime;
-  } else if (timeBuffer.aarhusThere) nextShip = timeBuffer.aarhusTime;
+  } else if (timeBuffer.aarhusThere) {
+    nextShip = timeBuffer.aarhusTime;
+  }
   else if (timeBuffer.houTime) {
     nextShip = timeBuffer.houTime;
-    Serial.print("set nextship time to hou time: ");
-    Serial.print(ctime(&nextShip));
-    Serial.print("compared to                  : ");
-    Serial.print(ctime(&currentMsTime));
+  } else {
+    // We need to refresh times
+    Serial.println("UPDATING FERRY TIMES");
+    updateTimes();
   }
   if (nextShip < currentMsTime) {
     nextShip = currentMsTime;

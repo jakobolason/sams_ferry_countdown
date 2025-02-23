@@ -24,11 +24,11 @@ String urlEncodeUTF8(String str) {
 }
 
 
-void searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]) {
+ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
       Serial.println("Failed to connect to rejseplanen");
-      return;
+      return ProgramCodes::HANDSHAKE_FAIL;
     }
   
     Serial.println("Connection successful!");
@@ -47,7 +47,7 @@ void searchLocation(String searchInput, String* placeId, WiFiClient *client, cha
       if (millis() - timeout > 5000) {
         Serial.println(">>> Client Timeout !");
         client->stop();
-        return;
+        return ProgramCodes::CLIENT_TIMEOUT;
       }
     }
     String jsonResponse = "{";
@@ -62,7 +62,6 @@ void searchLocation(String searchInput, String* placeId, WiFiClient *client, cha
     Serial.println(jsonResponse);
     client->stop();
 
-  
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonResponse);
     
@@ -70,7 +69,7 @@ void searchLocation(String searchInput, String* placeId, WiFiClient *client, cha
       Serial.print("JSON parsing failed: ");
       Serial.println(error.c_str());
       delay(10000);
-      return;
+      return ProgramCodes::JSON_PARSING_FAIL;
     }
     Serial.println("JSON parsed correctly!");
     JsonObject docObject = doc.as<JsonObject>();
@@ -80,37 +79,14 @@ void searchLocation(String searchInput, String* placeId, WiFiClient *client, cha
     Serial.print("FOUND ID!!!: ");
     Serial.println(locationId);
     *placeId = locationId;
-
-
-    // if (docObject["stopLocationOrCoordLocation"].is<JsonArray>() {
-    //   JsonArray locationsArray = docObject["stopLocationOrCoordLocation"];
-      
-      
-    //   if (locationsArray[0].containsKey("StopLocation")) {
-    //     JsonObject stopLocation = locationsArray[0]["StopLocation"];
-    //     Serial.println("Location found:");
-    //     // Now lets get the id - which is all we want
-    //     if (stopLocation.containsKey("id")) {
-    //       String locationId = stopLocation["id"];
-    //       Serial.print("FOUND ID!!!: ");
-    //       Serial.println(locationId);
-    //       *placeId = locationId;
-    //     } else {
-    //       Serial.println("NO id found in response");
-    //     }
-    //   } else {
-    //     Serial.println("No StopLocation found in response");
-    //   }
-    // } else {
-    //     Serial.println("No stopLocationOrCoordLocation found in response");
-    // }
+    return ProgramCodes::SUCCESSFULL;
   }
   
-void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers* buffer) {
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers* buffer, int duration) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
         Serial.println("Failed to connect to rejseplanen");
-        return;
+        return ProgramCodes::HANDSHAKE_FAIL;
     }
   
     Serial.println("Connection successful! Trying to get trip info now");
@@ -119,6 +95,8 @@ void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers
     client->print(api_key);
     client->print("&format=json&id=");
     client->print(from);
+    client->print("&duration=");
+    client->print(duration);
     client->println(" HTTP/1.1");
     client->println("User-Agent: Arduino/1.0");
     client->println("Cache-Control: no-cache");
@@ -133,7 +111,7 @@ void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers
       if (millis() - timeout > 5000) {
         Serial.println(">>> Client Timeout !");
         client->stop();
-        return;
+        return ProgramCodes::CLIENT_TIMEOUT;
       }
     }
     String headerResponse = "";
@@ -146,10 +124,19 @@ void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers
         int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200, 400)
         Serial.print("HTTP Status Code: ");
         Serial.println(statusCode);
-  
-        if (statusCode != 200) {
+        
+        if (statusCode == 400) { // Bad Request
+            JsonDocument doc;
+            deserializeJson(doc, client->readString());
+            String errorCode = doc["errorCode"];
+            if  (errorCode&& errorCode.compareTo("SVC_LOC")) {
+                // Faulty location id, fetch new one
+                return ProgramCodes::FAULTY_ORIGINID;
+            }
+        }
+        else if (statusCode != 200) {
             Serial.println("Error: Bad response from server.");
-            return; // Stop further processing
+            return ProgramCodes::BAD_REQUEST; // Stop further processing
         }
     } else {
       Serial.println("!!!--- No status code?");
@@ -173,25 +160,28 @@ void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers
     // Serial.print("Full response: ");
     // Serial.println(jsonResponse);
   
-    // JsonDocument filter;
-    // filter["Departure"];
-    // filter["direction"] = true;
+    JsonDocument filter;
+    filter["Departure"] = true;
     // filter["time"] = true;
     // filter["date"] = true;
     JsonDocument doc;
     
     client->stop();
-    DeserializationError error = deserializeJson(doc, jsonResponse); // , DeserializationOption::Filter(filter)
+    DeserializationError error = deserializeJson(doc, jsonResponse, DeserializationOption::Filter(filter));
     
     if (error) {
       Serial.print("JSON parsing failed: ");
       Serial.println(error.c_str());
       delay(10000);
-      return;
+      return ProgramCodes::JSON_PARSING_FAIL;
     }
 
     Serial.println("JSON parsed correctly!");
     JsonArray departures = doc["Departure"];
+    if (departures.isNull()) {
+        // No departures were found, fetch from next day
+        return ProgramCodes::NO_TRIPS;
+    }
 
     for(JsonObject v : departures) {
       String dir = v["direction"];
@@ -208,6 +198,7 @@ void searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers
         Serial.println("There was an unknonw direction found here: " + dir);
       }
     }
+    return ProgramCodes::SUCCESSFULL;
 }
 
 time_t stringToUnixTime(const char* dateStr, const char* timeStr) {
