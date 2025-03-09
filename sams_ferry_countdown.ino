@@ -95,9 +95,10 @@ void connectToWiFi() {
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
     // don't continue
-    while (true)
-      ;
+    while (true);
   }
+  timeBuffer.aarhusThere = false;
+  timeBuffer.houThere = false;
 
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
@@ -129,7 +130,12 @@ void updateTimes() {
     Serial.println("NEW ID");
   } else if (code == ProgramCodes::NO_TRIPS) {
     // TODO: Call searchTrip, but for the next day
-    code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer, 1000); // Add duration length of 2*500
+    Serial.println("Adding extra lenght to duration");
+    code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer, 600); // Add duration length of 2*500
+  } else if (code == ProgramCodes::BAD_REQUEST) {
+    Serial.println("BAD REQUEST NOT IMPLEMENTED");
+  } else if (code == ProgramCodes::JSON_PARSING_FAIL) {
+    Serial.println("SOMETHING WRONG WITH JSON PARSING");
   }
 
 }
@@ -145,6 +151,7 @@ void setup() {
   matrix.begin();
   // searchLocation("Sælvig", &saelvigId);
   searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer);
+
 }
 
 void loop() {

@@ -150,13 +150,17 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
           String size = line.substring(line.indexOf(":")+1);
           // sizeOfResponse = size.toInt();
           Serial.println("size: " + size);
+
         }
     }
   
     // Now read the JSON body
-    jsonResponse = client->readString();
-  
-  
+    // jsonResponse = client->readStringUntil('\"Departure\":');
+    // if (jsonResponse == NULL) {
+    //   // There were no departures found
+    //   return ProgramCodes::NO_TRIPS;
+    // }
+
     // Serial.print("Full response: ");
     // Serial.println(jsonResponse);
   
@@ -166,8 +170,8 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     // filter["date"] = true;
     JsonDocument doc;
     
+    DeserializationError error = deserializeJson(doc, *client, DeserializationOption::Filter(filter));
     client->stop();
-    DeserializationError error = deserializeJson(doc, jsonResponse, DeserializationOption::Filter(filter));
     
     if (error) {
       Serial.print("JSON parsing failed: ");
@@ -186,11 +190,11 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     for(JsonObject v : departures) {
       String dir = v["direction"];
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
-      if (dir.compareTo("Aarhus Havn, Dokk1 (færge)") == 0) {// then they are equal
+      if (dir.compareTo("Aarhus Havn, Dokk1 (færge)") == 0 && !buffer->aarhusThere) {// then they are equal
         buffer->aarhusTime = milliseconds;
         buffer->aarhusThere = true;
         Serial.println("Found aarhus time");
-      } else if (dir.compareTo("Hou Havn (færge)") == 0) {
+      } else if (dir.compareTo("Hou Havn (færge)") == 0 && !buffer->houThere) {
         buffer->houTime = milliseconds;
         buffer->houThere = true;
         Serial.println("Found hou time");
