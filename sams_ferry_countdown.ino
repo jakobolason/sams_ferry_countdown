@@ -48,11 +48,9 @@ WiFiClient client;
 int port = 443;
 
 String saelvigId = "A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740134093";
-String aarhusId = "A=1@O=Aarhus Havn, Dokk1 (f%C3%A6rge)@X=10215207@Y=56154094@U=86@L=110000504@B=1@p=1740134093@";
 
-datetimeBuffers timeBuffer = {};
-
-
+datetimeBuffers timeBuffer[3];
+uint8_t bufferIndex = 0;
 
 ArduinoLEDMatrix matrix;
 
@@ -97,8 +95,6 @@ void connectToWiFi() {
     // don't continue
     while (true);
   }
-  timeBuffer.aarhusThere = false;
-  timeBuffer.houThere = false;
 
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
@@ -116,28 +112,51 @@ void connectToWiFi() {
   Serial.println("Connected to WiFi");
   printWifiStatus();
 }
-
-void updateTimes() {
+// post: updated timebuffer and bufferIndex set to 0
+ProgramCodes updateTimes(uint8_t maxTries = 0) {
+  bufferIndex = 0;
+  if (maxTries > 5) {
+    // To avoid an endless loop, just return from here    
+    return ProgramCodes::ERROR;
+  }
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("A successfull wifi connnection was not established!");
-    return;
+    return ProgramCodes::WIFI_ERR;
   }
-  // call the functions
-  ProgramCodes code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer);
-  if (code == ProgramCodes::FAULTY_ORIGINID) {
-    // Call searchLocation
-    searchLocation("Sælvig", &saelvigId, &client, api_key);
-    Serial.println("NEW ID");
-  } else if (code == ProgramCodes::NO_TRIPS) {
-    // TODO: Call searchTrip, but for the next day
-    Serial.println("Adding extra lenght to duration");
-    code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer, 600); // Add duration length of 2*500
-  } else if (code == ProgramCodes::BAD_REQUEST) {
-    Serial.println("BAD REQUEST NOT IMPLEMENTED");
-  } else if (code == ProgramCodes::JSON_PARSING_FAIL) {
-    Serial.println("SOMETHING WRONG WITH JSON PARSING");
+  // 1st attempt
+  ProgramCodes code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, timeBuffer);
+  switch(code) {
+    case ProgramCodes::SUCCESSFULL:
+      return ProgramCodes::SUCCESSFULL;
+    case ProgramCodes::FAULTY_ORIGINID:
+      // Call searchLocation
+      searchLocation("Sælvig", &saelvigId, &client, api_key);
+      Serial.println("NEW ID");
+      break;
+    case ProgramCodes::NO_TRIPS:
+      // TODO: Call searchTrip, but for the next day
+      Serial.println("Adding extra lenght to duration");
+      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, timeBuffer, 600); // 
+      break;
+    case ProgramCodes::BAD_REQUEST:
+      Serial.println("BAD REQUEST NOT IMPLEMENTED");
+      break;
+    case ProgramCodes::JSON_PARSING_FAIL:
+      Serial.println("SOMETHING WRONG WITH JSON PARSING");
+      break;
+    case ProgramCodes::TOO_LARGE_REQUEST:
+      // Give a smaller duration
+      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, timeBuffer, 300); // To counteract the NO_TRIPS error
+      break;
+    default:
+      Serial.print("Error in API request");
+      break;
   }
-
+  //  if the exception handling didn't work, try again but with upper-cap
+  if (code != ProgramCodes::SUCCESSFULL) {
+    return updateTimes(maxTries++);
+  }
+  return ProgramCodes::SUCCESSFULL;
 }
 
 
@@ -149,9 +168,8 @@ void setup() {
   RTC.begin();
   updateTime();
   matrix.begin();
-  // searchLocation("Sælvig", &saelvigId);
-  searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &timeBuffer);
 
+  updateTimes(0);
 }
 
 void loop() {
@@ -164,23 +182,22 @@ void loop() {
   RTCTime currentTime;
   RTC.getTime(currentTime);
   time_t currentMsTime = currentTime.getUnixTime();
-  time_t nextShip = 0;  
-  if (timeBuffer.aarhusThere && timeBuffer.houThere) {
-    nextShip = timeBuffer.aarhusTime < timeBuffer.houTime ? timeBuffer.aarhusTime : timeBuffer.houTime;
-  } else if (timeBuffer.aarhusThere) {
-    nextShip = timeBuffer.aarhusTime;
+  time_t nextShip = 0;
+  // NOTE:               THIS \---/ is used for edge case, where ferry is just about to take off
+  if (timeBuffer[bufferIndex].timeStamp + 50 <= currentMsTime) {
+    // check boundaries
+    if (bufferIndex == 2) {
+      // update ferry times
+      updateTimes();
+      return;
+    } else {
+      // else we increase buffer and try at next loop
+      bufferIndex++;
+      return;
+    }
   }
-  else if (timeBuffer.houTime) {
-    nextShip = timeBuffer.houTime;
-  } else {
-    // We need to refresh times
-    Serial.println("UPDATING FERRY TIMES");
-    updateTimes();
-  }
-  if (nextShip < currentMsTime) {
-    nextShip = currentMsTime;
-    Serial.println("The ferry has passed...");
-  }
+  // now there is no way for the nextShip to have sailed already
+  nextShip = timeBuffer[bufferIndex].timeStamp;
 
   double diffSecs = difftime(nextShip, currentMsTime);
   if (isnan(diffSecs) || isinf(diffSecs)) {
@@ -210,5 +227,5 @@ void loop() {
   matrix.renderBitmap(currentFrame, NO_OF_ROWS, NO_OF_COLS);
 
 
-  delay(1000);
+  delay(1000);// Change this to 60 000 (60s) to only update every 60s
 }

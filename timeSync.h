@@ -5,7 +5,7 @@
 constexpr unsigned int LOCAL_PORT = 2390;  // local port to listen for UDP packets
 constexpr int NTP_PACKET_SIZE = 48; // NTP timestamp is in the first 48 bytes of the message
 
-unsigned long sendNTPpacket(IPAddress& address);
+void sendNTPpacket(IPAddress& address);
 unsigned long getUnixTime(int8_t timeZoneOffsetHours = 0, uint8_t maxTries = 5);
 void updateTime();
 void beginUDP();

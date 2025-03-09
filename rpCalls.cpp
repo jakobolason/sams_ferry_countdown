@@ -82,7 +82,7 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     return ProgramCodes::SUCCESSFULL;
   }
   
-ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers* buffer, int duration) {
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers buffer[3], int duration) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
         Serial.println("Failed to connect to rejseplanen");
@@ -93,7 +93,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     // now insert the parameters (using print allows us to more clearly represent the request)
     client->print("GET /api/departureBoard?accessId=");
     client->print(api_key);
-    client->print("&format=json&id=");
+    client->print("&format=json&maxJourneys=3&id=");
     client->print(from);
     client->print("&duration=");
     client->print(duration);
@@ -116,7 +116,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     }
     String headerResponse = "";
     String jsonResponse = "";
-    // int sizeOfResponse = 0;
+    int sizeOfResponse = 0;
     String statusLine = client->readStringUntil('\n'); // Read the first line (HTTP status)
     Serial.println(statusLine); // Debug output
   
@@ -148,22 +148,15 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         if (line.startsWith("Content-Length:")) {
           // then get the length, to get the right amount of memory allocated
           String size = line.substring(line.indexOf(":")+1);
-          // sizeOfResponse = size.toInt();
+          sizeOfResponse = size.toInt();
           Serial.println("size: " + size);
 
         }
     }
-  
-    // Now read the JSON body
-    // jsonResponse = client->readStringUntil('\"Departure\":');
-    // if (jsonResponse == NULL) {
-    //   // There were no departures found
-    //   return ProgramCodes::NO_TRIPS;
-    // }
+    if (sizeOfResponse > 8000) {
+      return ProgramCodes::TOO_LARGE_REQUEST;
+    }
 
-    // Serial.print("Full response: ");
-    // Serial.println(jsonResponse);
-  
     JsonDocument filter;
     filter["Departure"] = true;
     // filter["time"] = true;
@@ -186,22 +179,19 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         // No departures were found, fetch from next day
         return ProgramCodes::NO_TRIPS;
     }
-
+    uint8_t i = 0;
+    // insert times into buffer
     for(JsonObject v : departures) {
+      if (i >= 2) break; // boundary checking
+      Serial.println("Departure here");
       String dir = v["direction"];
+      bool to = (dir == "Hou Havn (færge)" ? true : false);
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
-      if (dir.compareTo("Aarhus Havn, Dokk1 (færge)") == 0 && !buffer->aarhusThere) {// then they are equal
-        buffer->aarhusTime = milliseconds;
-        buffer->aarhusThere = true;
-        Serial.println("Found aarhus time");
-      } else if (dir.compareTo("Hou Havn (færge)") == 0 && !buffer->houThere) {
-        buffer->houTime = milliseconds;
-        buffer->houThere = true;
-        Serial.println("Found hou time");
-      } else {
-        Serial.println("There was an unknonw direction found here: " + dir);
-      }
+      buffer[i].timeStamp = milliseconds;
+      buffer[i].to = to;
+      i++;
     }
+
     return ProgramCodes::SUCCESSFULL;
 }
 

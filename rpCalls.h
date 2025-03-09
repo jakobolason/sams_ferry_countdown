@@ -4,25 +4,25 @@
 #include <WiFi.h>
 #include "RTC.h"
 
-/* Holds time slot for both destinations
- * And boolean for if they exist
- * !Notice: when time has expired, boolean should be set to false
+/* 
+    Struct for each element in buffer
 */
 struct datetimeBuffers {
-    time_t aarhusTime;
-    time_t houTime;
-    bool aarhusThere;
-    bool houThere;
+    time_t timeStamp;
+    bool to; // 0 is hou, 1 is aarhus
 };
 
 enum class ProgramCodes {
     SUCCESSFULL,
+    ERROR,
+    WIFI_ERR,
     BAD_REQUEST,
     HANDSHAKE_FAIL,
     FAULTY_ORIGINID,
     NO_TRIPS,
     JSON_PARSING_FAIL,
     CLIENT_TIMEOUT,
+    TOO_LARGE_REQUEST
 };
 
 time_t stringToUnixTime(const char* dateStr, const char* timeStr);
