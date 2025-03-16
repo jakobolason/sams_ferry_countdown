@@ -82,7 +82,7 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     return ProgramCodes::SUCCESSFULL;
   }
   
-ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers buffer[3], int duration) {
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer buffer[3], int duration) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
         Serial.println("Failed to connect to rejseplanen");
@@ -93,7 +93,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     // now insert the parameters (using print allows us to more clearly represent the request)
     client->print("GET /api/departureBoard?accessId=");
     client->print(api_key);
-    client->print("&format=json&maxJourneys=3&id=");
+    client->print("&format=json&maxJourneys=2&id=");
     client->print(from);
     client->print("&duration=");
     client->print(duration);
@@ -131,11 +131,13 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
             String errorCode = doc["errorCode"];
             if  (errorCode&& errorCode.compareTo("SVC_LOC")) {
                 // Faulty location id, fetch new one
+                client->stop();
                 return ProgramCodes::FAULTY_ORIGINID;
             }
         }
         else if (statusCode != 200) {
             Serial.println("Error: Bad response from server.");
+            client->stop();
             return ProgramCodes::BAD_REQUEST; // Stop further processing
         }
     } else {
@@ -153,8 +155,9 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
 
         }
     }
-    if (sizeOfResponse > 8000) {
-      return ProgramCodes::TOO_LARGE_REQUEST;
+    if (sizeOfResponse > 6000) {
+      client->stop();
+      return ProgramCodes::TOO_LARGE_REQUEST; // the deserialzer can't handle more in ram
     }
 
     JsonDocument filter;
@@ -187,8 +190,9 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       String dir = v["direction"];
       bool to = (dir == "Hou Havn (færge)" ? true : false);
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
-      buffer[i].timeStamp = milliseconds;
-      buffer[i].to = to;
+      buffer->buffer[i].timeStamp = milliseconds;
+      buffer->buffer[i].to = to;
+      buffer->size++;
       i++;
     }
 
