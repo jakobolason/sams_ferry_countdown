@@ -82,7 +82,8 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     return ProgramCodes::SUCCESSFULL;
   }
   
-ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer buffer[3], int duration) {
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer* buffer, 
+                        int duration, bool useLastDateTime) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
         Serial.println("Failed to connect to rejseplanen");
@@ -97,6 +98,12 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     client->print(from);
     client->print("&duration=");
     client->print(duration);
+    if (useLastDateTime) {
+      client->print("&date=");
+      client->print(buffer->lastDate);
+      client->print("&time=");
+      client->print(buffer->lastTime);
+    }
     client->println(" HTTP/1.1");
     client->println("User-Agent: Arduino/1.0");
     client->println("Cache-Control: no-cache");
@@ -121,7 +128,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     Serial.println(statusLine); // Debug output
   
     if (statusLine.startsWith("HTTP/")) {
-        int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200, 400)
+        int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200 or 400)
         Serial.print("HTTP Status Code: ");
         Serial.println(statusCode);
         
@@ -182,21 +189,49 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         // No departures were found, fetch from next day
         return ProgramCodes::NO_TRIPS;
     }
-    uint8_t i = 0;
+    String lastDate = "";
+    String lastTime = "";
+    uint8_t i = buffer->size; // the buffer is always sorted before calling this function
     // insert times into buffer
     for(JsonObject v : departures) {
-      if (i >= 2) break; // boundary checking
+      if (i == 4) break; // boundary checking
       Serial.println("Departure here");
       String dir = v["direction"];
       bool to = (dir == "Hou Havn (færge)" ? true : false);
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
+      // notice that 'i' is one less than the actual size still, and 
+      // therefore no segfault will happen here (hopefully)
       buffer->buffer[i].timeStamp = milliseconds;
       buffer->buffer[i].to = to;
       buffer->size++;
       i++;
+      // also save the date and time, to maybe make another call
+      buffer->lastDate = v["date"];
+      const char* incrementedTime = incrementMinutes(v["time"]);
+      if (incrementedTime != nullptr) {
+          buffer->lastTime = incrementedTime;
+          delete[] incrementedTime;
+      }
     }
+    
 
     return ProgramCodes::SUCCESSFULL;
+}
+
+/**
+ * returns a sorted buffer, with no ferry times in the past and correct size
+ */
+void sortBuffer(datetimebuffer &buffer, time_t currentTime) {
+  datetimebuffer sortedBuffer = {};
+  uint8_t currentIndex = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (buffer.buffer[i].timeStamp < currentTime) continue;
+    // now we have a valid time
+    sortedBuffer.buffer[currentIndex] = buffer.buffer[i];
+    currentIndex++;
+    sortedBuffer.size++;
+  }
+  buffer = sortedBuffer;
 }
 
 time_t stringToUnixTime(const char* dateStr, const char* timeStr) {
@@ -207,4 +242,29 @@ time_t stringToUnixTime(const char* dateStr, const char* timeStr) {
     strptime(dateTimeStr, "%Y-%m-%d %H:%M:%S", &timeinfo);
     time_t seconds = mktime(&timeinfo);
     return seconds;
+}
+
+const char* incrementMinutes(const char* timeStr) {
+  if (timeStr == nullptr) {
+      return nullptr;
+  }
+  int hours = 0;
+  int minutes = 0;
+  // Parse the time string
+  int numFields = sscanf(timeStr, "%d:%d", &hours, &minutes);
+  if (numFields != 2) {
+      return nullptr;
+  }
+  minutes += 1;
+  if (minutes >= 60) {
+      hours += minutes / 60;
+      minutes %= 60;
+      if (hours >= 24) {
+          hours %= 24;
+      }
+  }
+  char* result = new char[10]; // Enough for HH:MM:SS\0
+  // HH:MM format
+  sprintf(result, "%02d:%02d", hours, minutes);
+  return result;
 }

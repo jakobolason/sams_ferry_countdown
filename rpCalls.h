@@ -13,8 +13,10 @@ struct datetimeelement {
 };
 
 struct datetimebuffer {
-    datetimeelement buffer[3];
+    datetimeelement buffer[4];
     uint8_t size;
+    const char* lastDate;
+    const char* lastTime;
 };
 
 enum class ProgramCodes {
@@ -33,6 +35,9 @@ enum class ProgramCodes {
 time_t stringToUnixTime(const char* dateStr, const char* timeStr);
 String urlEncodeUTF8(String str);
 ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]);
-ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer* buffer, int duration = 500);
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer* buffer, 
+                        int duration = 500, bool useLastDateTime = false);
+void sortBuffer(datetimebuffer &buffer, time_t currentTime);
+const char* incrementMinutes(const char* timeStr);
 
 #endif //_RP_CALLS_H

@@ -135,7 +135,13 @@ ProgramCodes updateTimes(uint8_t maxTries = 0) {
   ProgramCodes code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer);
   switch(code) {
     case ProgramCodes::SUCCESSFULL:
-      return ProgramCodes::SUCCESSFULL;
+      // maybe a bit reckless, but could be cool to try and fill up the buffer
+      if (dateTimeBuffer.size < 4) {
+        Serial.println("less than 4");
+        searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 500, true);
+        // don't use the return code, because if it doesn't work then it's okay
+      }
+      return code;
     case ProgramCodes::FAULTY_ORIGINID:
       // Call searchLocation and get new id
       searchLocation("Sælvig", &saelvigId, &client, api_key);
@@ -166,6 +172,7 @@ ProgramCodes updateTimes(uint8_t maxTries = 0) {
   if (code != ProgramCodes::SUCCESSFULL) {
     return updateTimes(maxTries++);
   }
+  
   return ProgramCodes::SUCCESSFULL; // == code
 }
 
@@ -207,17 +214,32 @@ void loop() {
   RTC.getTime(currentTime);
   time_t currentMsTime = currentTime.getUnixTime();
   time_t nextShip = 0;
-  // NOTE:               THIS \---/ is used for edge case, where ferry is just about to take off
-  if (dateTimeBuffer.buffer[bufferIndex].timeStamp + 60 <= currentMsTime) {
+  if (dateTimeBuffer.size < 1 || dateTimeBuffer.buffer[0].timeStamp + 60 <= currentMsTime) {
     // check boundaries
-    if (bufferIndex == 2) {
+    if (dateTimeBuffer.size < 1) {
       // update ferry times
-      Serial.println("Ferry has sailed");
-      updateTimes();
+      Serial.println("There are no times back? What went wrong");
+      ProgramCodes code = updateTimes();
+      if (code == ProgramCodes::ERROR) {
+        u8g2.clearBuffer();          // clear the internal memory
+        u8g2.setFont(u8g2_font_ncenB14_tr); // choose a suitable font
+        u8g2.drawStr(0, 20, "Der skete en fejl, prøv igen senere");
+        u8g2.sendBuffer(); 
+        delay(60000); // Delay a minute before trying again
+      }
+      delay(1000);
       return;
     } else {
-      // else we increase buffer and try at next loop
-      bufferIndex++;
+      // then we sort it
+      sortBuffer(dateTimeBuffer, currentMsTime);
+      ProgramCodes code = updateTimes();
+      if (code == ProgramCodes::ERROR) {
+        u8g2.clearBuffer();          // clear the internal memory
+        u8g2.setFont(u8g2_font_ncenB14_tr); // choose a suitable font
+        u8g2.drawStr(0, 20, "Der skete en fejl, prøv igen senere");
+        u8g2.sendBuffer(); 
+        delay(60000); // Delay a minute before trying again
+      }
       return;
     }
   }
