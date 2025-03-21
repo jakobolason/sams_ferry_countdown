@@ -89,21 +89,24 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         Serial.println("Failed to connect to rejseplanen");
         return ProgramCodes::HANDSHAKE_FAIL;
     }
+    if (useLastDateTime)  {
+      Serial.print("Current last date:");
+      Serial.println(buffer->lastDate);
+    }
+    String fullString = String("GET /api/departureBoard?accessId=" + String(api_key));
+    fullString.concat("&format=json&maxJourneys=2&id=" + String(from) + "&duration=" + String(duration));
+    if (useLastDateTime) {
+      if (buffer->lastDate != String("Hav")) 
+        fullString += ("&date=" + String(buffer->lastDate));
+      
+        fullString += ("&time=" + String(buffer->buffer[buffer->size - 1].stringTime));
+    }
+    Serial.println("HTTP request: ");
+    Serial.println(fullString);
   
     Serial.println("Connection successful! Trying to get trip info now");
     // now insert the parameters (using print allows us to more clearly represent the request)
-    client->print("GET /api/departureBoard?accessId=");
-    client->print(api_key);
-    client->print("&format=json&maxJourneys=2&id=");
-    client->print(from);
-    client->print("&duration=");
-    client->print(duration);
-    if (useLastDateTime) {
-      client->print("&date=");
-      client->print(buffer->lastDate);
-      client->print("&time=");
-      client->print(buffer->lastTime);
-    }
+    client->print(fullString);
     client->println(" HTTP/1.1");
     client->println("User-Agent: Arduino/1.0");
     client->println("Cache-Control: no-cache");
@@ -149,6 +152,8 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         }
     } else {
       Serial.println("!!!--- No status code?");
+      client->stop();
+      return ProgramCodes::BAD_REQUEST; // Stop further processing
     }
     // // Read and discard headers
     while (client->available()) {
@@ -189,12 +194,21 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         // No departures were found, fetch from next day
         return ProgramCodes::NO_TRIPS;
     }
-    String lastDate = "";
-    String lastTime = "";
     uint8_t i = buffer->size; // the buffer is always sorted before calling this function
     // insert times into buffer
     for(JsonObject v : departures) {
       if (i == 4) break; // boundary checking
+      bool duplicate = false;
+      for (int i = 0; i < buffer->size; ++i) {
+        if (buffer->buffer[i].stringTime == String( v["time"])) {
+          Serial.println("found duplicate at " + String(v["time"]));
+          duplicate = true;
+        } else {
+          Serial.println("not equal: " + buffer->buffer[i].stringTime + " vs: " + String( v["time"]));
+        }
+      }
+      if (duplicate) continue;
+
       Serial.println("Departure here");
       String dir = v["direction"];
       bool to = (dir == "Hou Havn (færge)" ? true : false);
@@ -204,16 +218,21 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       buffer->buffer[i].timeStamp = milliseconds;
       buffer->buffer[i].to = to;
       buffer->size++;
-      i++;
       // also save the date and time, to maybe make another call
-      buffer->lastDate = v["date"];
+      buffer->lastDate = String(v["date"]);
       const char* incrementedTime = incrementMinutes(v["time"]);
       if (incrementedTime != nullptr) {
-          buffer->lastTime = incrementedTime;
+          buffer->buffer[i].stringTime = String(v["time"]);
           delete[] incrementedTime;
       }
+      Serial.println("Added entry " + String(v["time"]));
+      // i know it's stupid to do this for every loop, since it's only neccessary for the last one.
+      i++;
     }
-    
+    Serial.print("values after adding:");
+    Serial.println(buffer->lastDate);
+    Serial.println(buffer->buffer[buffer->size - 1].stringTime);
+    Serial.println("First time string: " + buffer->buffer[0].stringTime);
 
     return ProgramCodes::SUCCESSFULL;
 }

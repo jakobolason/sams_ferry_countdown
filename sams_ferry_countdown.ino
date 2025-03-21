@@ -52,7 +52,6 @@ int port = 443;
 String saelvigId = "A=1@O=S%C3%A6lvig%20Havn%20(f%C3%A6rge)@X=10549354@Y=55864255@U=86@L=110000501@B=1@p=1740134093";
 
 datetimebuffer dateTimeBuffer = {};
-uint8_t bufferIndex = 0;
 
 // sets up u8g2 for the correct display (using sda and scd pins on arduino uno r4 wifi)
 U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -117,9 +116,41 @@ void connectToWiFi() {
   Serial.println("Connected to WiFi");
   printWifiStatus();
 }
-// post: updated timebuffer and bufferIndex set to 0
+
+ProgramCodes controlApiCalls(ProgramCodes code) {
+  switch(code) {
+    case ProgramCodes::SUCCESSFULL:
+      break;
+    case ProgramCodes::FAULTY_ORIGINID:
+      // Call searchLocation and get new id
+      searchLocation("Sælvig", &saelvigId, &client, api_key);
+      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer);
+      Serial.println("NEW ID");
+      break;
+    case ProgramCodes::NO_TRIPS:
+      // TODO: Call searchTrip, but for the next day
+      Serial.println("Adding extra lenght to duration");
+      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 600); // 
+      break;
+    case ProgramCodes::BAD_REQUEST:
+      Serial.println("BAD REQUEST NOT IMPLEMENTED");
+      break;
+    case ProgramCodes::JSON_PARSING_FAIL:
+      Serial.println("SOMETHING WRONG WITH JSON PARSING"); // handle this the same way as TOO_LARGE_REQUEST
+    case ProgramCodes::TOO_LARGE_REQUEST:
+      // Give a smaller duration
+      Serial.println("TOO Large request");
+      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 300); // To counteract the NO_TRIPS error
+      break;
+    default:
+      Serial.print("Error in API request");
+      break;
+  }
+  return code;
+}
+ 
+// post: updated timebuffer
 ProgramCodes updateTimes(uint8_t maxTries = 0) {
-  bufferIndex = 0;
   dateTimeBuffer.size = 0;
   if (maxTries > 5) {
     Serial.println("WARNING: Endless loop");
@@ -133,48 +164,28 @@ ProgramCodes updateTimes(uint8_t maxTries = 0) {
   }
   // 1st attempt
   ProgramCodes code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer);
-  switch(code) {
-    case ProgramCodes::SUCCESSFULL:
-      // maybe a bit reckless, but could be cool to try and fill up the buffer
-      if (dateTimeBuffer.size < 4) {
-        Serial.println("less than 4");
-        searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 500, true);
-        // don't use the return code, because if it doesn't work then it's okay
-      }
-      return code;
-    case ProgramCodes::FAULTY_ORIGINID:
-      // Call searchLocation and get new id
-      searchLocation("Sælvig", &saelvigId, &client, api_key);
-      code = searchTrip(saelvigId, &client, api_key, &dateTimeBuffer);
-      Serial.println("NEW ID");
-      break;
-    case ProgramCodes::NO_TRIPS:
-      // TODO: Call searchTrip, but for the next day
-      Serial.println("Adding extra lenght to duration");
-      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 600); // 
-      break;
-    case ProgramCodes::BAD_REQUEST:
-      Serial.println("BAD REQUEST NOT IMPLEMENTED");
-      break;
-    case ProgramCodes::JSON_PARSING_FAIL:
-      Serial.println("SOMETHING WRONG WITH JSON PARSING");
-      break;
-    case ProgramCodes::TOO_LARGE_REQUEST:
-      // Give a smaller duration
-      Serial.println("TOO Large request");
-      code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 300); // To counteract the NO_TRIPS error
-      break;
-    default:
-      Serial.print("Error in API request");
-      break;
+  code = controlApiCalls(code);
+  // maybe a bit reckless, but could be cool to try and fill up the buffer
+  int counter = 0;
+  while (dateTimeBuffer.size < 3 && counter < 3) {
+    Serial.println("less than 3");
+    delay(500);
+    code = searchTrip(urlEncodeUTF8(saelvigId), &client, api_key, &dateTimeBuffer, 500, true);
+    code = controlApiCalls(code);
+    // don't use the return code, because if it doesn't work then it's okay
   }
+
   //  if the exception handling didn't work, try again but with upper-cap
   if (code != ProgramCodes::SUCCESSFULL) {
+    Serial.println("UPDATE ATTEMPT WAS UNSUCCESSFULL");
+    delay(1000);
     return updateTimes(maxTries++);
   }
   
+  
   return ProgramCodes::SUCCESSFULL; // == code
 }
+
 
 String formatDateTime(int val) {
   return val / 10 != 0 ? String(val) : "0" + String(val);
@@ -242,13 +253,25 @@ void loop() {
       }
       return;
     }
-  }
+  } 
+  // else if (dateTimeBuffer.size < 3) {
+  //   // i would like to keep 3 entries at all times
+  //   ProgramCodes code = updateTimes();
+  //     if (code == ProgramCodes::ERROR) {
+  //       u8g2.clearBuffer();          // clear the internal memory
+  //       u8g2.setFont(u8g2_font_ncenB14_tr); // choose a suitable font
+  //       u8g2.drawStr(0, 20, "Der skete en fejl, prøv igen senere");
+  //       u8g2.sendBuffer(); 
+  //       delay(60000); // Delay a minute before trying again
+  //     }
+  //     return;
+  // }
   // now there is no way for the nextShip to have sailed already
   u8g2.clearBuffer();          // clear the internal memory
   u8g2.setFont(u8g2_font_ncenB14_tr); // choose a suitable font
   u8g2.drawRFrame(0, 0, 128, 64, 7);
   // Draw first ferry time as large, with a vertical bar beneath
-  nextShip = dateTimeBuffer.buffer[bufferIndex].timeStamp;
+  nextShip = dateTimeBuffer.buffer[0].timeStamp;
   // I want a vertical bar below the first ferry time
   u8g2.drawHLine(10, 32, 108);
   double diffSecs = difftime(nextShip, currentMsTime);
@@ -268,14 +291,14 @@ void loop() {
     String days_countdown = String(dayUntil) + " dage";
     u8g2.drawStr(0, 10, days_countdown.c_str());
   } else {
-    String to = (dateTimeBuffer.buffer[bufferIndex].to == 1 ? "Hou" : "Aarhus");
+    String to = (dateTimeBuffer.buffer[0].to == 1 ? "Hou" : "Aarhus");
     String time_countdown = "T-" + formatDateTime(hoursUntil) + ":" + formatDateTime(minutesRemaining);
     u8g2.drawStr(10, 31, time_countdown.c_str());
     u8g2.setFont(u8g2_font_ncenB08_tr); // switch to smaller font for space reasons
     u8g2.drawStr(85, 31, to.c_str());
   }
 
-  for (int i = bufferIndex+1; i < dateTimeBuffer.size; ++i) {
+  for (int i = 1; i < dateTimeBuffer.size; ++i) {
     nextShip = dateTimeBuffer.buffer[i].timeStamp;
     double diffSecs = difftime(nextShip, currentMsTime);
     if (isnan(diffSecs) || isinf(diffSecs)) {

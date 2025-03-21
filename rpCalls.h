@@ -9,13 +9,14 @@
 */
 struct datetimeelement {
     time_t timeStamp;
+    String stringTime;
     bool to; // 0 is hou, 1 is aarhus
 };
 
 struct datetimebuffer {
     datetimeelement buffer[4];
     uint8_t size;
-    const char* lastDate;
+    String lastDate;
     const char* lastTime;
 };
 
@@ -39,5 +40,6 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
                         int duration = 500, bool useLastDateTime = false);
 void sortBuffer(datetimebuffer &buffer, time_t currentTime);
 const char* incrementMinutes(const char* timeStr);
+const char* transformDateFormat(const char* dateStr);
 
 #endif //_RP_CALLS_H
