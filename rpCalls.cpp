@@ -82,21 +82,31 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     return ProgramCodes::SUCCESSFULL;
   }
   
-ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimeBuffers buffer[3], int duration) {
+ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer* buffer, 
+                        int duration, bool useLastDateTime) {
     Serial.println("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
         Serial.println("Failed to connect to rejseplanen");
         return ProgramCodes::HANDSHAKE_FAIL;
     }
+    if (useLastDateTime)  {
+      Serial.print("Current last date:");
+      Serial.println(buffer->lastDate);
+    }
+    String fullString = String("GET /api/departureBoard?accessId=" + String(api_key));
+    fullString.concat("&format=json&maxJourneys=2&id=" + String(from) + "&duration=" + String(duration));
+    if (useLastDateTime) {
+      if (buffer->lastDate != String("Hav")) 
+        fullString += ("&date=" + String(buffer->lastDate));
+      
+        fullString += ("&time=" + String(buffer->lastTime));
+    }
+    Serial.println("HTTP request: ");
+    Serial.println(fullString);
   
     Serial.println("Connection successful! Trying to get trip info now");
     // now insert the parameters (using print allows us to more clearly represent the request)
-    client->print("GET /api/departureBoard?accessId=");
-    client->print(api_key);
-    client->print("&format=json&maxJourneys=3&id=");
-    client->print(from);
-    client->print("&duration=");
-    client->print(duration);
+    client->print(fullString);
     client->println(" HTTP/1.1");
     client->println("User-Agent: Arduino/1.0");
     client->println("Cache-Control: no-cache");
@@ -121,7 +131,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     Serial.println(statusLine); // Debug output
   
     if (statusLine.startsWith("HTTP/")) {
-        int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200, 400)
+        int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200 or 400)
         Serial.print("HTTP Status Code: ");
         Serial.println(statusCode);
         
@@ -131,15 +141,19 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
             String errorCode = doc["errorCode"];
             if  (errorCode&& errorCode.compareTo("SVC_LOC")) {
                 // Faulty location id, fetch new one
+                client->stop();
                 return ProgramCodes::FAULTY_ORIGINID;
             }
         }
         else if (statusCode != 200) {
             Serial.println("Error: Bad response from server.");
+            client->stop();
             return ProgramCodes::BAD_REQUEST; // Stop further processing
         }
     } else {
       Serial.println("!!!--- No status code?");
+      client->stop();
+      return ProgramCodes::BAD_REQUEST; // Stop further processing
     }
     // // Read and discard headers
     while (client->available()) {
@@ -153,8 +167,9 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
 
         }
     }
-    if (sizeOfResponse > 8000) {
-      return ProgramCodes::TOO_LARGE_REQUEST;
+    if (sizeOfResponse > 6000) {
+      client->stop();
+      return ProgramCodes::TOO_LARGE_REQUEST; // the deserialzer can't handle more in ram
     }
 
     JsonDocument filter;
@@ -179,20 +194,64 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
         // No departures were found, fetch from next day
         return ProgramCodes::NO_TRIPS;
     }
-    uint8_t i = 0;
+    uint8_t i = buffer->size; // the buffer is always sorted before calling this function
     // insert times into buffer
     for(JsonObject v : departures) {
-      if (i >= 2) break; // boundary checking
+      if (i == 4) break; // boundary checking
+      bool duplicate = false;
+      for (int i = 0; i < buffer->size; ++i) {
+        if (buffer->buffer[i].stringTime == String( v["time"])) {
+          Serial.println("found duplicate at " + String(v["time"]));
+          duplicate = true;
+        } else {
+          Serial.println("not equal: " + buffer->buffer[i].stringTime + " vs: " + String( v["time"]));
+        }
+      }
+      if (duplicate) continue;
+
       Serial.println("Departure here");
       String dir = v["direction"];
       bool to = (dir == "Hou Havn (færge)" ? true : false);
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
-      buffer[i].timeStamp = milliseconds;
-      buffer[i].to = to;
+      // notice that 'i' is one less than the actual size still, and 
+      // therefore no segfault will happen here (hopefully)
+      buffer->buffer[i].timeStamp = milliseconds;
+      buffer->buffer[i].to = to;
+      buffer->size++;
+      // also save the date and time, to maybe make another call
+      buffer->lastDate = String(v["date"]);
+      const char* incrementedTime = incrementMinutes(v["time"]);
+      if (incrementedTime != nullptr) {
+          buffer->buffer[i].stringTime = String(v["time"]);
+          buffer->lastTime = String(incrementedTime);
+          delete[] incrementedTime;
+      }
+      Serial.println("Added entry " + String(v["time"]));
+      // i know it's stupid to do this for every loop, since it's only neccessary for the last one.
       i++;
     }
+    Serial.print("values after adding:");
+    Serial.println(buffer->lastDate);
+    Serial.println(buffer->lastTime);
+    Serial.println("First time string: " + buffer->buffer[0].stringTime);
 
     return ProgramCodes::SUCCESSFULL;
+}
+
+/**
+ * returns a sorted buffer, with no ferry times in the past and correct size
+ */
+void sortBuffer(datetimebuffer &buffer, time_t currentTime) {
+  datetimebuffer sortedBuffer = {};
+  uint8_t currentIndex = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (buffer.buffer[i].timeStamp < currentTime) continue;
+    // now we have a valid time
+    sortedBuffer.buffer[currentIndex] = buffer.buffer[i];
+    currentIndex++;
+    sortedBuffer.size++;
+  }
+  buffer = sortedBuffer;
 }
 
 time_t stringToUnixTime(const char* dateStr, const char* timeStr) {
@@ -203,4 +262,60 @@ time_t stringToUnixTime(const char* dateStr, const char* timeStr) {
     strptime(dateTimeStr, "%Y-%m-%d %H:%M:%S", &timeinfo);
     time_t seconds = mktime(&timeinfo);
     return seconds;
+}
+
+const char* incrementMinutes(const char* timeStr) {
+  if (timeStr == nullptr) {
+      return nullptr;
+  }
+  int hours = 0;
+  int minutes = 0;
+  // Parse the time string
+  int numFields = sscanf(timeStr, "%d:%d", &hours, &minutes);
+  if (numFields != 2) {
+      return nullptr;
+  }
+  minutes += 1;
+  if (minutes >= 60) {
+      hours += minutes / 60;
+      minutes %= 60;
+      if (hours >= 24) {
+          hours %= 24;
+      }
+  }
+  char* result = new char[10]; // Enough for HH:MM:SS\0
+  // HH:MM format
+  sprintf(result, "%02d:%02d", hours, minutes);
+  return result;
+}
+
+String convertMillisToDateTime(long long milliseconds) {
+  // Convert milliseconds to seconds
+  time_t seconds = milliseconds / 1000;
+  
+  // Convert to local time
+  tm* localTime = localtime(&seconds);
+  
+  // Format the time string
+  char buffer[25]; // Buffer for formatted time
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localTime);
+  
+  // Get millisecond part and convert to int
+  int millisPart = milliseconds % 1000;
+  
+  // Create Arduino String with the formatted time
+  String timeString = String(buffer) + ".";
+  
+  // Add leading zeros if needed
+  if (millisPart < 100) {
+    timeString += "0";
+  }
+  if (millisPart < 10) {
+    timeString += "0";
+  }
+  
+  // Explicitly convert millisPart to int to avoid ambiguity
+  timeString += String((int)millisPart);
+  
+  return timeString;
 }
