@@ -193,6 +193,80 @@ String formatDateTime(int val) {
   return val / 10 != 0 ? String(val) : "0" + String(val);
 }
 
+void showTimes(time_t currentMsTime, bool showTimeStamp) {
+  time_t nextShip = 0;
+  u8g2.clearBuffer();                  // clear the internal memory
+  u8g2.setFont(u8g2_font_ncenB14_tr);  // choose a suitable font
+  u8g2.drawRFrame(0, 0, 128, 64, 7);
+  // Draw first ferry time as large, with a vertical bar beneath
+  nextShip = dateTimeBuffer.buffer[0].timeStamp;
+  // I want a vertical bar below the first ferry time
+  double diffSecs = difftime(nextShip, currentMsTime);
+  if (isnan(diffSecs) || isinf(diffSecs)) {
+    Serial.println("Overflow or invalid time difference detected!");
+    diffSecs = 0;
+  }
+
+  int minutesUntil = diffSecs / 60;
+  int hoursUntil = minutesUntil / 60;
+  // use as rest, showing hours and minutes correctly
+  int minutesRemaining = minutesUntil % 60;
+  int dayUntil = hoursUntil / 24;
+  String to = (dateTimeBuffer.buffer[0].to == 1 ? "Hou" : "Aarhus");
+
+  // display each departure fetched
+  if (dayUntil != 0) {
+    String days_countdown = String(dayUntil) + " dage";
+    u8g2.drawStr(10, 20, days_countdown.c_str());
+    u8g2.setFont(u8g2_font_ncenB08_tr);  // switch to smaller font for space reasons
+    u8g2.drawStr(85, 20, to.c_str());
+  } else {
+    u8g2.drawHLine(10, 32, 108);
+    String time_countdown = "";
+    if (showTimeStamp) {
+      time_countdown = dateTimeBuffer.buffer[0].stringTime;
+    } else {
+      time_countdown = "T-" + formatDateTime(hoursUntil) + ":" + formatDateTime(minutesRemaining);
+    }
+    u8g2.drawStr(10, 31, time_countdown.c_str());
+    u8g2.setFont(u8g2_font_ncenB08_tr);  // switch to smaller font for space reasons
+    u8g2.drawStr(85, 31, to.c_str());
+  }
+
+  for (int i = 1; i < dateTimeBuffer.size; ++i) {
+    nextShip = dateTimeBuffer.buffer[i].timeStamp;
+    double diffSecs = difftime(nextShip, currentMsTime);
+    if (isnan(diffSecs) || isinf(diffSecs)) {
+      Serial.println("Overflow or invalid time difference detected!");
+      diffSecs = 0;
+    }
+    int minutesUntil = diffSecs / 60;
+    int hoursUntil = minutesUntil / 60;
+    // use as rest, showing hours and minutes correctly
+    int minutesRemaining = minutesUntil % 60;
+    int dayUntil = hoursUntil / 24;
+    String to = (dateTimeBuffer.buffer[i].to == 1 ? "Hou" : "Aarhus");
+
+
+    // display each departure fetched
+    if (dayUntil != 0) {
+      String days_countdown = String(dayUntil) + " dage";
+      u8g2.drawStr(10, 15 + 15*i, days_countdown.c_str());
+      u8g2.drawStr(85, 15 + 15*i, to.c_str());
+    } else {
+      String  time_countdown = "";
+      if (showTimeStamp) {
+        time_countdown = dateTimeBuffer.buffer[i].stringTime;
+      } else {
+        time_countdown = "T-" + formatDateTime(hoursUntil) + ":" + formatDateTime(minutesRemaining);
+      }
+      u8g2.drawStr(30, 32 + i * 13, time_countdown.c_str());
+      u8g2.drawStr(85, 32 + i * 13, to.c_str());
+    }
+  }
+  u8g2.sendBuffer();  // transfer internal memory to the display
+}
+
 void setup() {
   Serial.begin(9600);
 
@@ -226,7 +300,6 @@ void loop() {
   time_t currentMsTime = currentTime.getUnixTime(); // calibration scalar, since RTC is too fast
   // Serial.println("Current time from millis: " + convertMillisToDateTime(currentMsTime*1000));
 
-  time_t nextShip = 0;
   if (dateTimeBuffer.size < 1 || dateTimeBuffer.buffer[0].timeStamp + 60 <= currentMsTime) {
     // check boundaries
     if (dateTimeBuffer.size < 1) {
@@ -257,97 +330,11 @@ void loop() {
       return;
     }
   }
-  // else if (dateTimeBuffer.size < 3) {
-  //   // i would like to keep 3 entries at all times
-  //   ProgramCodes code = updateTimes();
-  //     if (code == ProgramCodes::ERROR) {
-  //       u8g2.clearBuffer();          // clear the internal memory
-  //       u8g2.setFont(u8g2_font_ncenB14_tr); // choose a suitable font
-  //       u8g2.drawStr(0, 20, "Der skete en fejl, prøv igen senere");
-  //       u8g2.sendBuffer();
-  //       delay(60000); // Delay a minute before trying again
-  //     }
-  //     return;
-  // }
+
   // now there is no way for the nextShip to have sailed already
-  u8g2.clearBuffer();                  // clear the internal memory
-  u8g2.setFont(u8g2_font_ncenB14_tr);  // choose a suitable font
-  u8g2.drawRFrame(0, 0, 128, 64, 7);
-  // Draw first ferry time as large, with a vertical bar beneath
-  nextShip = dateTimeBuffer.buffer[0].timeStamp;
-  // I want a vertical bar below the first ferry time
-  double diffSecs = difftime(nextShip, currentMsTime);
-  if (isnan(diffSecs) || isinf(diffSecs)) {
-    Serial.println("Overflow or invalid time difference detected!");
-    diffSecs = 0;
-  }
+  showTimes(currentMsTime, false);
 
-  int minutesUntil = diffSecs / 60;
-  int hoursUntil = minutesUntil / 60;
-  // use as rest, showing hours and minutes correctly
-  int minutesRemaining = minutesUntil % 60;
-  int dayUntil = hoursUntil / 24;
-  String to = (dateTimeBuffer.buffer[0].to == 1 ? "Hou" : "Aarhus");
-
-  // display each departure fetched
-  if (dayUntil != 0) {
-    String days_countdown = String(dayUntil) + " dage";
-    u8g2.drawStr(10, 20, days_countdown.c_str());
-    u8g2.setFont(u8g2_font_ncenB08_tr);  // switch to smaller font for space reasons
-    u8g2.drawStr(85, 20, to.c_str());
-  } else {
-    u8g2.drawHLine(10, 32, 108);
-    String time_countdown = "T-" + formatDateTime(hoursUntil) + ":" + formatDateTime(minutesRemaining);
-    u8g2.drawStr(10, 31, time_countdown.c_str());
-    u8g2.setFont(u8g2_font_ncenB08_tr);  // switch to smaller font for space reasons
-    u8g2.drawStr(85, 31, to.c_str());
-  }
-
-  for (int i = 1; i < dateTimeBuffer.size; ++i) {
-    nextShip = dateTimeBuffer.buffer[i].timeStamp;
-    double diffSecs = difftime(nextShip, currentMsTime);
-    if (isnan(diffSecs) || isinf(diffSecs)) {
-      Serial.println("Overflow or invalid time difference detected!");
-      diffSecs = 0;
-    }
-    int minutesUntil = diffSecs / 60;
-    int hoursUntil = minutesUntil / 60;
-    // use as rest, showing hours and minutes correctly
-    int minutesRemaining = minutesUntil % 60;
-    int dayUntil = hoursUntil / 24;
-    String to = (dateTimeBuffer.buffer[i].to == 1 ? "Hou" : "Aarhus");
-
-
-    // display each departure fetched
-    if (dayUntil != 0) {
-      String days_countdown = String(dayUntil) + " dage";
-      u8g2.drawStr(10, 15 + 15*i, days_countdown.c_str());
-      u8g2.drawStr(85, 15 + 15*i, to.c_str());
-      // then print "{dayUntil} dage"
-      // setDigit(first, digits[dayUntil / 10]);
-      // setDigit(second, digits[dayUntil % 10]);
-      // setDigit(third, characters[0]);
-      // setDigit(fourth, characters[1]);
-    } else {
-      // Serial.println(time_countdown);
-      // Serial.println(to);
-      // Serial.println(i);
-      String time_countdown = "T-" + formatDateTime(hoursUntil) + ":" + formatDateTime(minutesRemaining);
-      u8g2.drawStr(30, 32 + i * 13, time_countdown.c_str());
-      u8g2.drawStr(85, 32 + i * 13, to.c_str());
-      // setDigit(first, digits[(int)(hoursUntil / 10)]);
-      // setDigit(second, digits[(int)(hoursUntil % 10)]);
-      // setDigit(third, digits[(int)(minutesRemaining / 10)]);
-      // setDigit(fourth, digits[(int)(minutesRemaining % 10)]);
-    }
-  }
-  u8g2.sendBuffer();  // transfer internal memory to the display
-  // if (ORIENTATION == 1) {
-  //   rotateFrame();
-  // }
-  // matrix.renderBitmap(currentFrame, NO_OF_ROWS, NO_OF_COLS);
-  // u8g2.drawStr(0,10,"Hello World from countdown!");  // write something to the internal memory
   if (dateTimeBuffer.size < 3)
     delay(60000);
-  delay(10000);  // Change this to 60 000 (60s) to only update every 60s
+  delay(20000);  // Change this to 60 000 (60s) to only update every 60s
 }
