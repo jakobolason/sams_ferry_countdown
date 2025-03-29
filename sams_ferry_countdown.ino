@@ -11,8 +11,8 @@
  3. Set timezone offset hours using the #define TIMEZONE_OFFSET_HOURS according to your localization
 */
 
-#include "led-matrix.h"
-#include "Arduino_LED_Matrix.h"
+// #include "led-matrix.h"
+// #include "Arduino_LED_Matrix.h"
 #include "RTC.h"
 #include <WiFi.h>
 #include <time.h>
@@ -56,7 +56,7 @@ datetimebuffer dateTimeBuffer = {};
 // sets up u8g2 for the correct display (using sda and scd pins on arduino uno r4 wifi)
 U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE);
 
-ArduinoLEDMatrix matrix;
+// ArduinoLEDMatrix matrix;
 
 // void setDigit(position digitPosition, const byte digit[][5]) {
 //   for (byte r = 0; r < 3; r++) {
@@ -236,7 +236,8 @@ void loop() {
       if (code == ProgramCodes::ERROR) {
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB14_tr);  // choose a suitable font
-        u8g2.drawStr(0, 20, "Der skete en fejl, prøv igen senere");
+        u8g2.drawStr(0, 20, "Der skete en fejl,");
+        u8g2.drawStr(0, 40, "prøv igen senere");
         u8g2.sendBuffer();
         delay(60000);  // Delay a minute before trying again
       }
