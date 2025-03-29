@@ -17,7 +17,7 @@ struct datetimebuffer {
     datetimeelement buffer[4];
     uint8_t size;
     String lastDate;
-    const char* lastTime;
+    String lastTime;
 };
 
 enum class ProgramCodes {
@@ -40,6 +40,6 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
                         int duration = 500, bool useLastDateTime = false);
 void sortBuffer(datetimebuffer &buffer, time_t currentTime);
 const char* incrementMinutes(const char* timeStr);
-const char* transformDateFormat(const char* dateStr);
+String convertMillisToDateTime(long long milliseconds);
 
 #endif //_RP_CALLS_H

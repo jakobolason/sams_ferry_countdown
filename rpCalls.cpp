@@ -99,7 +99,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       if (buffer->lastDate != String("Hav")) 
         fullString += ("&date=" + String(buffer->lastDate));
       
-        fullString += ("&time=" + String(buffer->buffer[buffer->size - 1].stringTime));
+        fullString += ("&time=" + String(buffer->lastTime));
     }
     Serial.println("HTTP request: ");
     Serial.println(fullString);
@@ -223,6 +223,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       const char* incrementedTime = incrementMinutes(v["time"]);
       if (incrementedTime != nullptr) {
           buffer->buffer[i].stringTime = String(v["time"]);
+          buffer->lastTime = String(incrementedTime);
           delete[] incrementedTime;
       }
       Serial.println("Added entry " + String(v["time"]));
@@ -231,7 +232,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     }
     Serial.print("values after adding:");
     Serial.println(buffer->lastDate);
-    Serial.println(buffer->buffer[buffer->size - 1].stringTime);
+    Serial.println(buffer->lastTime);
     Serial.println("First time string: " + buffer->buffer[0].stringTime);
 
     return ProgramCodes::SUCCESSFULL;
@@ -286,4 +287,35 @@ const char* incrementMinutes(const char* timeStr) {
   // HH:MM format
   sprintf(result, "%02d:%02d", hours, minutes);
   return result;
+}
+
+String convertMillisToDateTime(long long milliseconds) {
+  // Convert milliseconds to seconds
+  time_t seconds = milliseconds / 1000;
+  
+  // Convert to local time
+  tm* localTime = localtime(&seconds);
+  
+  // Format the time string
+  char buffer[25]; // Buffer for formatted time
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localTime);
+  
+  // Get millisecond part and convert to int
+  int millisPart = milliseconds % 1000;
+  
+  // Create Arduino String with the formatted time
+  String timeString = String(buffer) + ".";
+  
+  // Add leading zeros if needed
+  if (millisPart < 100) {
+    timeString += "0";
+  }
+  if (millisPart < 10) {
+    timeString += "0";
+  }
+  
+  // Explicitly convert millisPart to int to avoid ambiguity
+  timeString += String((int)millisPart);
+  
+  return timeString;
 }
