@@ -1,6 +1,14 @@
 #ifndef _RP_CALLS_H
 #define _RP_CALLS_H
 
+// #define DEBUG   // Comment this out to disable debugging
+
+#ifdef DEBUG
+  #define Debug(x) Serial.println(x)
+#else
+  #define Debug(x)  // Empty definition, does nothing
+#endif
+
 #include <WiFi.h>
 #include "RTC.h"
 

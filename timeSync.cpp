@@ -78,6 +78,10 @@ void updateTime(){
     if(unixTime == 0){
         unixTime = getUnixTime(2,25);
     }
+    if (unixTime < 1609459200) { // Jan 1, 2021
+        Serial.println("Suspiciously old timestamp received from NTP!");
+        // Handle error
+    }
     RTCTime timeToSet = RTCTime(unixTime);
     RTC.setTime(timeToSet);
     Serial.println("Time updated.");

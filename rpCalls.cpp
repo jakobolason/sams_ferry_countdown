@@ -25,13 +25,13 @@ String urlEncodeUTF8(String str) {
 
 
 ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *client, char api_key[]) {
-    Serial.println("Attempting to connect to rejseplanen");
+    Debug("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
-      Serial.println("Failed to connect to rejseplanen");
+      Debug("Failed to connect to rejseplanen");
       return ProgramCodes::HANDSHAKE_FAIL;
     }
   
-    Serial.println("Connection successful!");
+    Debug("Connection successful!");
     client->print("GET /api/location.name?maxNo=1&type=S&format=json&input=");
     client->print(searchInput);
     client->print("&accessId=");
@@ -45,7 +45,7 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     unsigned long timeout = millis();
     while (client->available() == 0) {
       if (millis() - timeout > 5000) {
-        Serial.println(">>> Client Timeout !");
+        Debug(">>> Client Timeout !");
         client->stop();
         return ProgramCodes::CLIENT_TIMEOUT;
       }
@@ -59,7 +59,7 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
       jsonResponse += client->readString();
     }
     Serial.print("Full response: ");
-    Serial.println(jsonResponse);
+    Debug(jsonResponse);
     client->stop();
 
     JsonDocument doc;
@@ -67,31 +67,31 @@ ProgramCodes searchLocation(String searchInput, String* placeId, WiFiClient *cli
     
     if (error) {
       Serial.print("JSON parsing failed: ");
-      Serial.println(error.c_str());
+      Debug(error.c_str());
       delay(10000);
       return ProgramCodes::JSON_PARSING_FAIL;
     }
-    Serial.println("JSON parsed correctly!");
+    Debug("JSON parsed correctly!");
     JsonObject docObject = doc.as<JsonObject>();
     JsonArray locationsArray = docObject["stopLocationOrCoordLocation"].as<JsonArray>();
     JsonObject stopLocation = locationsArray[0]["StopLocation"];
     String locationId = stopLocation["id"];
     Serial.print("FOUND ID!!!: ");
-    Serial.println(locationId);
+    Debug(locationId);
     *placeId = locationId;
     return ProgramCodes::SUCCESSFULL;
   }
   
 ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetimebuffer* buffer, 
                         int duration, bool useLastDateTime) {
-    Serial.println("Attempting to connect to rejseplanen");
+    Debug("Attempting to connect to rejseplanen");
     if (!client->connect("www.rejseplanen.dk", 80)) {
-        Serial.println("Failed to connect to rejseplanen");
+        Debug("Failed to connect to rejseplanen");
         return ProgramCodes::HANDSHAKE_FAIL;
     }
     if (useLastDateTime)  {
       Serial.print("Current last date:");
-      Serial.println(buffer->lastDate);
+      Debug(buffer->lastDate);
     }
     String fullString = String("GET /api/departureBoard?accessId=" + String(api_key));
     fullString.concat("&format=json&maxJourneys=2&id=" + String(from) + "&duration=" + String(duration));
@@ -101,10 +101,10 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       
         fullString += ("&time=" + String(buffer->lastTime));
     }
-    Serial.println("HTTP request: ");
-    Serial.println(fullString);
+    Debug("HTTP request: ");
+    Debug(fullString);
   
-    Serial.println("Connection successful! Trying to get trip info now");
+    Debug("Connection successful! Trying to get trip info now");
     // now insert the parameters (using print allows us to more clearly represent the request)
     client->print(fullString);
     client->println(" HTTP/1.1");
@@ -113,13 +113,13 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     client->println("Host: rejseplanen.dk");
     client->println("Connection: close");
     client->println();
-    Serial.println("GET request sent");
+    Debug("GET request sent");
   
     // Wait for the server's response
     unsigned long timeout = millis();
     while (client->available() == 0) {
       if (millis() - timeout > 5000) {
-        Serial.println(">>> Client Timeout !");
+        Debug(">>> Client Timeout !");
         client->stop();
         return ProgramCodes::CLIENT_TIMEOUT;
       }
@@ -128,12 +128,12 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     String jsonResponse = "";
     int sizeOfResponse = 0;
     String statusLine = client->readStringUntil('\n'); // Read the first line (HTTP status)
-    Serial.println(statusLine); // Debug output
+    Debug(statusLine); // Debug output
   
     if (statusLine.startsWith("HTTP/")) {
         int statusCode = statusLine.substring(9, 12).toInt(); // Extract status code (e.g., 200 or 400)
         Serial.print("HTTP Status Code: ");
-        Serial.println(statusCode);
+        Debug(statusCode);
         
         if (statusCode == 400) { // Bad Request
             JsonDocument doc;
@@ -146,12 +146,12 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
             }
         }
         else if (statusCode != 200) {
-            Serial.println("Error: Bad response from server.");
+            Debug("Error: Bad response from server.");
             client->stop();
             return ProgramCodes::BAD_REQUEST; // Stop further processing
         }
     } else {
-      Serial.println("!!!--- No status code?");
+      Debug("!!!--- No status code?");
       client->stop();
       return ProgramCodes::BAD_REQUEST; // Stop further processing
     }
@@ -163,7 +163,7 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
           // then get the length, to get the right amount of memory allocated
           String size = line.substring(line.indexOf(":")+1);
           sizeOfResponse = size.toInt();
-          Serial.println("size: " + size);
+          Debug("size: " + size);
 
         }
     }
@@ -183,12 +183,12 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
     
     if (error) {
       Serial.print("JSON parsing failed: ");
-      Serial.println(error.c_str());
+      Debug(error.c_str());
       delay(10000);
       return ProgramCodes::JSON_PARSING_FAIL;
     }
 
-    Serial.println("JSON parsed correctly!");
+    Debug("JSON parsed correctly!");
     JsonArray departures = doc["Departure"];
     if (departures.isNull()) {
         // No departures were found, fetch from next day
@@ -201,15 +201,15 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
       bool duplicate = false;
       for (int i = 0; i < buffer->size; ++i) {
         if (buffer->buffer[i].stringTime == String( v["time"])) {
-          Serial.println("found duplicate at " + String(v["time"]));
+          Debug("found duplicate at " + String(v["time"]));
           duplicate = true;
         } else {
-          Serial.println("not equal: " + buffer->buffer[i].stringTime + " vs: " + String( v["time"]));
+          Debug("not equal: " + buffer->buffer[i].stringTime + " vs: " + String( v["time"]));
         }
       }
       if (duplicate) continue;
 
-      Serial.println("Departure here");
+      Debug("Departure here");
       String dir = v["direction"];
       bool to = (dir == "Hou Havn (færge)" ? true : false);
       time_t milliseconds = stringToUnixTime(v["date"], v["time"]);
@@ -226,14 +226,14 @@ ProgramCodes searchTrip(String from, WiFiClient* client, char api_key[], datetim
           buffer->lastTime = String(incrementedTime);
           delete[] incrementedTime;
       }
-      Serial.println("Added entry " + String(v["time"]));
+      Debug("Added entry " + String(v["time"]));
       // i know it's stupid to do this for every loop, since it's only neccessary for the last one.
       i++;
     }
     Serial.print("values after adding:");
-    Serial.println(buffer->lastDate);
-    Serial.println(buffer->lastTime);
-    Serial.println("First time string: " + buffer->buffer[0].stringTime);
+    Debug(buffer->lastDate);
+    Debug(buffer->lastTime);
+    Debug("First time string: " + buffer->buffer[0].stringTime);
 
     return ProgramCodes::SUCCESSFULL;
 }
